@@ -19,6 +19,68 @@ import copy
 import time
 
 
+class Soot:
+# Main Soot Object Class, containing all other objects
+
+	def __init__(self,reaction_mechanism,surface_mechanism=None):
+
+		# Store reaction_mechanism, surface_mechanism
+		self.reaction_mechanism = reaction_mechanism
+		self.surface_mechanism = surface_mechanism
+
+		# Create Gas Object
+		self.gas = ct.Solution(reaction_mechanism)		
+		
+		# Flags to control shit
+	#	self.solve_coupled = True
+	#	self.solve_soot = True
+	#	self.constant_pressure = False
+	#	self.aggregation = True
+		#keyboard()
+
+
+		# Control Flags
+		# ** Add any main control flags for any future development here and then reference to them here**
+		# ** This makes debugging a lot easier **
+		
+		self.solve_coupled = True	# Solve Soot Coupled to Reactor Equations? - Need to Initialize MOMIC Module
+		self.solve_soot = False		# Initialize MOMIC Module to do soot 
+		self.solve_energy = True	# Solves Energy Equation in Reactor
+		self.solve_heat_transfer = False
+
+
+		# Associated Object Classes
+		# Add reference to this main Class
+		self.MOMIC = MOMIC(gas_object=self.gas, main_class=self)
+		self.deposit = None #deposition(main_class=self)	
+		self.droplet = None #droplet(main_class=self)
+		self.Sol = None 	# Reference to solution for WSR or PFR
+		self.WSR = WSR(reaction_mechanism, main_class=self)
+		self.PFR = PFR(reaction_mechanism,surface_mechanism,WSR_object=self.WSR,main_class=self)
+				
+	
+	def initialize(self,Num_M_Moments,Num_P_Moments,regime):
+		# Use this method to initialize MOMIC module instead of using input file
+		# Inputs are:
+		# Num_M_Moments: Number of M Moments to Use
+		# Num_P_Moments: Number of P Moments to Use
+		# regime: Coagulation regime calculation - 
+		#			0: Calculate Based on Knudsen Number
+		#			1: Free Molecular
+		#			2: Transitional
+		#			3: Continuum
+
+		# Initialize MOMIC Module	
+		self.MOMIC.initialize(Num_M_Moments,Num_P_Moments,regime)
+
+		# Switch Flag to Solve Soot
+		self.solve_soot = True
+
+		if Num_P_Moments == 0:
+			self.aggregation = False
+		else:
+			self.aggregation = True
+				 
 
 class MOMIC:
 # F90 Method of Moments Subroutine
@@ -282,466 +344,6 @@ class MOMIC:
 
 	def update_regime_flags(self,reset=False):
 		# Update source term Regime flags based on soot size
-		# Reset Flags
-		#return
-		if reset:
-			#self.regime = 2
-		#	self.aggregate = False
-			return
-
-
-		# Calculate kn
-		#kn = self.kn()
-		kn = -1
-		# Check what regime to set 
-		if kn <=0.1:
-			regime= 0
-		elif kn <= 10 and self.regime !=0:
-			regime = 1
-		elif kn > 10 and self.regime !=1:
-			regime = 2
-		else:
-			return
-			regime = self.regime
-
-		if self.regime == regime:
-			self.condition_switch_flag = False
-		else:
-			self.condition_switch_flag = True
-		#	self.regime = regime
-
-		# Now Check Aggregation
-		if False:#self.aggregation:
-			# Calculate D of average soot particle
-			Davg = self.Davg_soot_particle(self.M)
-
-			if Davg< self.aggregate_Dstar and not self.aggregate:
-				self.aggregate = False
-				self.P[:] = self.M[0]
-			else:
-				if not self.aggregate  and not self.condition_switch_flag:
-					self.condition_switch_flag = True
-				else:
-					self.condition_switch_flag = False
-
-				self.aggregate = True
-
-		#else:
-		#	self.aggregate = False
-
-
-
-	@staticmethod
-	def Davg_soot_particle(M):
-		# Calculate Diameter of average soot particle (NOT AVERAGE DIAMETER)
-
-		# Carbon Mass in grams
-		mc = 12*1.67e-24 
-		# Diameter of Average Soot Particle (in m)
-		return (6/np.pi*mc*M[1]/M[0]/1.8)**(1/3)*1e-2
-
-	@staticmethod
-	def soot_properties(M):
-
-		# Calculate Diameter of average particle
-		Davg = MOMIC.Davg_soot_particle(M)
-
-		# Append Average Soot Particle Diameter to Average properties from moment calc
-		return np.append(Davg,momic.momic.soot_properties(M))
-	
-	@staticmethod
-	def mean_free_path(P,T):
-		# Return Mean Free Path for air in meters
-		return momic.momic.mfp(P,T)*1e-2
-	
-	@staticmethod
-	def soot_mfr(M,rho_gas):
-		return momic.momic.soot_y_calc(M,rho_gas)
-
-	def calculate_source_switcher(self):
-		# Calculate MOMIC rates, but select coagulation regime and
-		# aggregation using this function, rather than within the 
-		# MOMIC F90 code
-		#
-		# Use this function with scipy ode if multiple regimes 
-		# could be present
-
-		# Control regime and aggregate with these properties:
-		# self.regime
-		# self.aggregate
-
-		# AGGREGATION AND REGIEM SET TO 1 and True
-		print('AGG AND TRANSITIONAL REGIME TURNED ON')
-		self.regime = 1
-		self.aggregate = True
-
-		# Call Fortran Code
-		Out = momic.momic.calculate_source_switcher(self.M,self.P,	\
-				self.gas.T, self.gas.P,						\
-				self.C2H2, 									\
-				self.H, 									\
-				self.H2, 									\
-				self.H2O, 									\
-				self.O2, 									\
-				self.OH,self.regime,self.aggregate )									\
-		
-		# Split MOMIC Rates Outputs
-		self.W = Out[0]
-		self.G = Out[1]
-		self.R = Out[2]
-		self.Hr = Out[3]
-		self.Ragg = Out[4]
-	
-		# Total Rates
-		self.SM = self.W+self.G+self.R
-		self.SP = self.Hr + self.Ragg
-		
-		# Species Rates
-		self.rC2H2 = Out[5]
-		self.rCO = Out[6]
-		self.rH = Out[7]
-		self.rH2 = Out[8]
-		self.rH2O = Out[9]
-		self.rO2 = Out[10]
-		self.rOH = Out[11]
-	
-		return self.SM, self.SP, [self.W,self.G,self.R,self.Hr,self.Ragg], Out[5:]
-
-	def ct_rate_switcher(self):
-		# Same as ct rate, but uses calculate_source_switcher
-		self.Temperature = self.gas.T
-		self.Pressure = self.gas.P
-		
-		# Convert Cantera Concentration from kmol/m^3 to mol/cm^3
-		# MOMIC Units are in mol/cm^3
-		self.C2H2 = self.gas.concentrations[self.gas.species_index('C2H2')]*1e-3
-		self.H = self.gas.concentrations[self.gas.species_index('H')]*1e-3
-		self.H2 = self.gas.concentrations[self.gas.species_index('H2')]*1e-3
-		self.H2O = self.gas.concentrations[self.gas.species_index('H2O')]*1e-3
-		self.O2 = self.gas.concentrations[self.gas.species_index('O2')]*1e-3
-		self.OH = self.gas.concentrations[self.gas.species_index('OH')]*1e-3
-		
-		# Run MOMIC 
-		self.calculate_source_switcher()
-		
-		# Define vector of soot consumption rates
-		self.wdot_soot[:] = 0
-		self.wdot_soot[self.gas.species_index('C2H2')] = self.rC2H2
-		self.wdot_soot[self.gas.species_index('CO')] = self.rCO
-		self.wdot_soot[self.gas.species_index('H')] = self.rH
-		self.wdot_soot[self.gas.species_index('H2')] = self.rH2
-		self.wdot_soot[self.gas.species_index('H2O')] = self.rH2O
-		self.wdot_soot[self.gas.species_index('O2')] = self.rO2
-		self.wdot_soot[self.gas.species_index('OH')] = self.rOH
-		
-		# Output species rates in mol/cm^3, convert to kmol/m^3 (Cantera units)
-		self.wdot_soot*=1e3
-		
-		return self.SM, self.SP, [self.W,self.G,self.R,self.Hr,self.Ragg], self.wdot_soot
-
-class Soot:
-# Main Soot Object Class, containing all other objects
-
-	def __init__(self,reaction_mechanism,surface_mechanism=None):
-
-		# Store reaction_mechanism, surface_mechanism
-		self.reaction_mechanism = reaction_mechanism
-		self.surface_mechanism = surface_mechanism
-
-		# Create Gas Object
-		self.gas = ct.Solution(reaction_mechanism)		
-		
-		# Flags to control shit
-	#	self.solve_coupled = True
-	#	self.solve_soot = True
-	#	self.constant_pressure = False
-	#	self.aggregation = True
-		#keyboard()
-
-
-		# Control Flags
-		# ** Add any main control flags for any future development here and then reference to them here**
-		# ** This makes debugging a lot easier **
-		
-		self.solve_coupled = True	# Solve Soot Coupled to Reactor Equations? - Need to Initialize MOMIC Module
-		self.solve_soot = False		# Initialize MOMIC Module to do soot 
-		self.solve_energy = True	# Solves Energy Equation in Reactor
-		self.solve_heat_transfer = False
-
-
-		# Associated Object Classes
-		# Add reference to this main Class
-		self.MOMIC = MOMIC(gas_object=self.gas, main_class=self)
-		self.deposit = None #deposition(main_class=self)	
-		self.droplet = None #droplet(main_class=self)
-		self.Sol = None 	# Reference to solution for WSR or PFR
-		self.WSR = WSR(reaction_mechanism, main_class=self)
-		self.PFR = PFR(reaction_mechanism,surface_mechanism,WSR_object=self.WSR,main_class=self)
-				
-	
-	def initialize(self,Num_M_Moments,Num_P_Moments,regime):
-		# Use this method to initialize MOMIC module instead of using input file
-		# Inputs are:
-		# Num_M_Moments: Number of M Moments to Use
-		# Num_P_Moments: Number of P Moments to Use
-		# regime: Coagulation regime calculation - 
-		#			0: Calculate Based on Knudsen Number
-		#			1: Free Molecular
-		#			2: Transitional
-		#			3: Continuum
-
-		# Initialize MOMIC Module	
-		self.MOMIC.initialize(Num_M_Moments,Num_P_Moments,regime)
-
-		# Switch Flag to Solve Soot
-		self.solve_soot = True
-
-		if Num_P_Moments == 0:
-			self.aggregation = False
-		else:
-			self.aggregation = True
-				 
-
-class MOMIC2:
-# F90 Method of Moments Subroutine
-
-	def __init__(self,M=[],P=[],gas_object=None,main_class=None):
-		# If using this in integrator, pass M/P as reference!
-		self.M = []
-		self.P = []
-		self.Num_M_Moments = None
-		self.Num_P_Moments = None
-		self.C2H2 = []
-		self.H = []
-		self.H2 = []
-		self.H2O = []
-		self.O2 = []
-		self.OH = []
-		self.Temperature = []
-		self.Pressure = []
-		self.M_moments = []
-		self.P_moments = []
-		self.aggregation = False
-
-		# Species Production Rates (Defined after calling calculate_source method)
-		self.rC2H2 = []
-		self.rCO = []
-		self.rH = []
-		self.rH2 = []
-		self.rH2O = []
-		self.rO2 = []
-		self.rOH = []
-		
-		# Source Terms (Defined after calling calculate_source method)
-		self.W = []
-		self.G = []
-		self.R = []
-		self.Hr = []
-		self.Ragg = []
-		self.SM = []
-		self.SP = []
-
-		# Check if main class is defined, add references if it is
-		if main_class is not None:
-			self.main = main_class
-			self.gas = self.main.gas
-		else:
-			self.main = None
-			self.gas = gas_object
-
-		if self.gas is not None:
-			self.wdot_soot = np.zeros(self.gas.n_species)
-		else:
-			self.wdot_soot = None
-
-
-		# Run set Moments
-		self.set_moments(M, P)
-
-		# Flags to control MOMIC Source Calculation
-		self.aggregation = False
-		self.regime = 2	# 2:Free-Molecular 1:Transitional 0:Continuum
-		self.condition_switch_flag = False
-
-		# Control for when to turn on aggregation
-		self.aggregate_Dstar = 10e-9
-
-	def moment_dict(self):
-		# Return Moments as Dictionary
-		# Useful for using with Cantera SolutionArray
-		
-		# Make M and P Dictionaries
-		M_Moments = {'M{}'.format(i):M for i,M in enumerate(self.M)}
-		P_Moments = {'P{}'.format(i):P for i,P in enumerate(self.P)}
-
-		# Add P Dict to M Dict to make a single Dict
-		M_Moments.update(P_Moments)
-
-		return M_Moments
-
-	def initialize(self,Num_M_Moments,Num_P_Moments=0,regime=0):
-		# Use this method to initialize MOMIC module
-		# Inputs are:
-		# Num_M_Moments: Number of M Moments to Use
-		# Num_P_Moments: Number of P Moments to Use
-		# regime: Coagulation regime calculation - 
-		#			0: Calculate Based on Knudsen Number
-		#			1: Free Molecular
-		#			2: Transitional
-		#			3: Continuum
-		
-		momic.momic.initialize(Num_M_Moments,Num_P_Moments,regime)
-
-		# Assign these attributes
-		self.Num_M_Moments = Num_M_Moments
-		self.Num_P_Moments = Num_P_Moments
-
-		# Assign some random initial M,P Moments if they're none
-		
-		if self.M or np.size(self.M) != Num_M_Moments:
-			self.M = np.exp(np.arange(1,Num_M_Moments+1,1))
-
-		if Num_P_Moments>0:
-			self.aggregation = True
-		else:
-			self.aggregation = False
-			
-		if self.P or np.size(self.P) != Num_P_Moments:
-			if Num_P_Moments>0:
-				self.P = np.exp(np.arange(1,Num_P_Moments+1,1))
-
-	def update_regime(self,regime,force_aggregate=False):
-		
-		momic.momic.update_regime(regime,force_aggregate)
-	
-	def update_regime2(self,regime):
-		# Update MOMIC Regime after MOMIC Module has been initialized
-		# Useful for convergence in some cases where soot regime changes
-		# between itertation
-		
-		# Inputs are:
-		# Num_M_Moments: Number of M Moments to Use
-		# Num_P_Moments: Number of P Moments to Use
-		# regime: Coagulation regime calculation - 
-		#			0: Calculate Based on Knudsen Number
-		#			1: Free Molecular
-		#			2: Transitional
-		#			3: Continuum
-
-		if self.Num_M_Moments is None or self.Num_P_Moments is None:
-			raise ValueError('Initialize MOMIC Module First Before Updating Regime!')
-		
-		momic.momic.initialize(Num_M_Moments,Num_P_Moments,regime)
-
-	
-	def set_moments(self,M,P=[]):
-		# Set Moments
-
-		self.M = np.array(M)
-		self.P = np.array(P)
-	
-	def set_ct_gas(self,gas_object):
-		# If using in integrator, pass in gas_object as reference!
-		self.gas = gas_object
-		
-		# Vector for storing soot rates
-		self.wdot_soot = np.zeros(self.gas.n_species)
-
-	def ct_rate(self):
-		
-		self.Temperature = self.gas.T
-		self.Pressure = self.gas.P
-		
-		# Convert Cantera Concentration from kmol/m^3 to mol/cm^3
-		# MOMIC Units are in mol/cm^3
-		self.C2H2 = self.gas.concentrations[self.gas.species_index('C2H2')]*1e-3
-		self.H = self.gas.concentrations[self.gas.species_index('H')]*1e-3
-		self.H2 = self.gas.concentrations[self.gas.species_index('H2')]*1e-3
-		self.H2O = self.gas.concentrations[self.gas.species_index('H2O')]*1e-3
-		self.O2 = self.gas.concentrations[self.gas.species_index('O2')]*1e-3
-		self.OH = self.gas.concentrations[self.gas.species_index('OH')]*1e-3
-		
-		# Run MOMIC 
-		self.calculate_source()
-		
-		# Define vector of soot consumption rates
-		self.wdot_soot[:] = 0
-		self.wdot_soot[self.gas.species_index('C2H2')] = self.rC2H2
-		self.wdot_soot[self.gas.species_index('CO')] = self.rCO
-		self.wdot_soot[self.gas.species_index('H')] = self.rH
-		self.wdot_soot[self.gas.species_index('H2')] = self.rH2
-		self.wdot_soot[self.gas.species_index('H2O')] = self.rH2O
-		self.wdot_soot[self.gas.species_index('O2')] = self.rO2
-		self.wdot_soot[self.gas.species_index('OH')] = self.rOH
-		
-		# Output species rates in mol/cm^3, convert to kmol/m^3 (Cantera units)
-		self.wdot_soot*=1e3
-		
-		return self.SM, self.SP, [self.W,self.G,self.R,self.Hr,self.Ragg], self.wdot_soot
-
-	def calculate_source(self):
-		
-		
-		#self.M = np.array([1563431637952.1221,        5.4694645091208154E+017, 3.0854648534416676E+024 ,  5.1878835584526814E+031, 1.7316422220433473E+039, 1.0845932269676145E+047])
-		#self.P = np.array([50750691012985.234, 6702199007004728.0, 1.8606677869701711E+018])
-		#self.gas.TP = 1808.7422245375019, 1762856.5554454876 
-
-		#self.C2H2 = 6.3046341861470507E-006 
-		#self.H = 6.2781901687664760E-009 
-		#self.H2O = 3.5117396971343936E-005 
-		#self.O2 = 9.3198046836176468E-011
-		#self.OH = 2.4784268063872528E-010
-
-		# Call Fortran Code
-		Out = momic.momic.calculate_source(self.M,self.P,	\
-				self.gas.T, self.gas.P,						\
-				self.C2H2, 									\
-				self.H, 									\
-				self.H2, 									\
-				self.H2O, 									\
-				self.O2, 									\
-				self.OH )									\
-		
-		# Split MOMIC Rates Outputs
-		self.W = Out[0]
-		self.G = Out[1]
-		self.R = Out[2]
-		self.Hr = Out[3]
-		self.Ragg = Out[4]
-	
-		# Total Rates
-		self.SM = self.W+self.G+self.R
-		self.SP = self.Hr + self.Ragg
-		
-		# Species Rates
-		self.rC2H2 = Out[5]
-		self.rCO = Out[6]
-		self.rH = Out[7]
-		self.rH2 = Out[8]
-		self.rH2O = Out[9]
-		self.rO2 = Out[10]
-		self.rOH = Out[11]
-	
-		return self.SM, self.SP, [self.W,self.G,self.R,self.Hr,self.Ragg], Out[5:]
-
-	def k_soot(self,T):
-		# Calculate soot thermal conductivity
-		# From paper on soot measurments
-	
-		k = 13.0839 - 0.03495*T+3.82e-5*T**2-1.48e-8*T**3
-
-		return np.max([k,1])
-
-	def kn(self):
-		# Calculate knudsent number
-
-		D_soot = self.soot_properties(self.M)[0]
-		mfp = self.mean_free_path(self.gas.P,self.gas.T)
-
-		return 2*mfp/D_soot
-	
-	def update_regime_flags(self,reset=False):
-		# Update source term Regime flags based on soot size
 
 		# Reset Flags
 		if reset:
@@ -752,15 +354,7 @@ class MOMIC2:
 		# Calculate kn
 		kn = self.kn()
 
-		# Check what regime to set 
-		if kn <=0.1:
-			regime= 0
-		elif kn <= 10 and self.regime !=0:
-			regime = 1
-		elif kn > 10 and self.regime !=1:
-			regime = 2
-		else:
-			regime = self.regime
+
 
 		if self.regime == regime:
 			self.condition_switch_flag = False
@@ -975,49 +569,6 @@ class WSR():
 		self.solve_droplet = False
 
 
-		#self.solve_coupled = True
-		#self.solve_energy = True
-		#self.aggregation = False
-		
-		#self.flag = False
-		#self.solve_droplet = False
-		#self.solve_soot = False
-		#self.constant_source = False
-		#self.solve_heat_transfer = False
-
-		#self.do_aggregation = False
-		#self.MOMIC_initialized = False
-
-
-		# Check if main class is defined, add references if it is
-		#if main_class is not None:
-		#	self.main = main_class
-		#	self.gas = self.main.gas
-		#	self.solve_coupled = main_class.solve_coupled
-		#	self.solve_soot = self.main.solve_soot
-		#	self.constant_pressure = self.main.constant_pressure
-		#else:
-		#	self.main = self
-
-		#	if gas_object is None:
-		#		self.gas = ct.Solution(reaction_mechanism)
-		#	else:
-		#		self.gas = gas_object
-
-		#	self.solve_coupled = False
-		#	self.solve_soot = False
-		#	self.constant_pressure = False
-
-		# Gas and Moment State Attribute
-		#self.state = np.append(np.array([self.gas.T,self.gas.density]), self.gas.Y)
-
-		# Sources
-		#self.Q_source = 0
-
-
-
-
-
 	def update_control_flags(self,caller=None):
 		# Update Control Flags in WSR
 
@@ -1089,50 +640,6 @@ class WSR():
 		# Enable droplet solve
 		self.solve_droplet = True 
 
-	def constV_reactor(self,V):
-		
-		reactor = ct.IdealGasReactor(self.gas)
-		reactor.volume = V
-		
-		sim = ct.ReactorNet([reactor])
-		sim.advance(1e-5)
-		keyboard()
-	
-	def constP_reactor(self,V):
-		reactor = ct.IdealGasConstPressureReactor(self.gas)
-		reactor.volume = V
-		
-		sim = ct.ReactorNet([reactor])
-		sim.advance_to_steady_state()
-				
-		return tres 
-	
-	def constP_react(self,V):
-		inlet_res = ct.Reservoir(self.inlet_gas)
-		
-		outlet_gas = ct.Solution(self.reaction_mechanism)
-		outlet_gas.TPY = 300, self.inlet_gas.P, 'N2:1'
-		
-		outlet_res = ct.Reservoir(outlet_gas)
-		
-		self.gas.TPY = self.inlet_gas.TPY
-		self.gas.equilibrate('HP')
-		
-		reactor = ct.IdealGasReactor(self.gas)
-		reactor.volume = V
-		
-		MFC = ct.MassFlowController(inlet_res,reactor,mdot=self.mdot)
-		K_func = lambda dP: self.mdot
-
-		PC = ct.PressureController(reactor,outlet_res,master=MFC,K=1e-5)
-
-		sim = ct.ReactorNet([reactor])
-		sim.advance_to_steady_state()
-		
-		tres = self.gas.density*V/self.mdot
-
-		return tres
-		
 
 	def set_moments(self,M,P=[]):
 
@@ -1168,135 +675,6 @@ class WSR():
 			print('Setting Reactor Wall Temperature to: {} K'.format(Twall))
 			self.Twall = Twall
 
-
-	def PFR2(self,inlets,x,Ac,P=[]):
-	
-		#keyboard()
-		#self.mix_pfr_inlet(inlet)
-		n_reactors = len(x)
-
-		add_inlet = [False]*(len(x)+1)
-		
-		for i,inlet in enumerate(inlets):
-			if inlet:
-				add_inlet[i] = True
-		
-		# Inlet:
-		#[T,P,Y,mdot,hv]
-	
-		if P:
-			pass
-		else:
-			P = 101325*np.ones(len(x)+1)
-		
-		
-		P0 = 500*101325/14.7
-		
-		for i,x in enumerate(x):
-			
-			if i == 0:
-				dx = x
-			else:
-				dx = x[i]-x[i-1]
-			
-			Q = 0
-			if add_inlet[i]:
-				mix,Q = self.mix_pfr_inlet(inlets[i])
-				self.gas.TPY = mix.T,mix.P,mix.Y
-				
-				mdot= mix.mass
-			
-			
-				#self.gas.HP = self.gas.h-Q/mdot,self.gas.P
-			
-			V = Ac[i]*dx
-			
-			self.def_inlet_gas(self.gas.T,P0,self.gas.Y)
-			self.gas.equilibrate('HP')
-			self.WSR_P(V,mdot,Q=Q)
-			
-			
-					
-			P1 = self.gas.P
-			u1 = mdot/(self.gas.density*Ac[i])
-			
-			u2 = u1
-			
-			count = 0
-			while True:
-				count+=1
-				u2i = u2
-				P2 = P1 -mdot/Ac[i]*(u2-u1)#-Pressuredrop*dx-Soot
-			
-				self.def_inlet_gas(self.gas.T,P2,self.gas.Y)
-				self.WSR_P(V,mdot)
-				
-				u2 = mdot/(self.gas.density*Ac[i])
-				
-				if np.abs(u2-u2i)<1e-3:
-					break
-				
-				if count >100:
-					keyboard()
-			
-			# Save DATA 
-			u1 = u2
-			
-			Pt = self.total_P(sel.gas,u2)
-			
-			keyboard()
-			
-			
-			
-			if add_inlet[i+1]:
-				inlets[i+1].append([self.gas.T,self.gas.P,self.gas.Y,mdot,0])
-
-
-	def PFR5(self,inlet_in,x,Ac):
-	
-		
-		# mdot Target for At
-		# Solve WSR with no Pressure loss for P0_guess
-		# Add Pressure loss term + 4fDL + Soot 
-		# Run with P0
-			# Calculate mdot
-				# if too low increase P0 by 10%
-				# if too high decrease P0 by 10%
-			# Use bisection to find P0 
-		
-		
-		P0 = 251*101325/14.7
-		
-		
-		inlet_prop = [False]*len(x)
-		
-		inlets = inlet_in[:]
-		
-		for i,inlet in enumerate(inlet_in):
-			mix,Q = self.mix_pfr_inlet(inlet)
-			inlets[i] = [[mix.T,mix.P,mix.Y,mix.mass,Q]]
-		
-				
-		inlet_prop[0:len(inlets)] = inlets
-		
-		
-		reactor_input = [x,Ac,inlet_prop]
-		
-		Sol = self.PFR_no_soot(x,Ac,inlet_prop,P0)
-		
-		gas = ct.Solution(self.reaction_mechanism)
-		gas2 = ct.Solution(self.reaction_mechanism)
-		
-		gas2.TPY = Sol.T[0],Sol.P[0],Sol.Y[0,:]
-		gas.TPY = Sol.T[-1],Sol.P[-1],Sol.Y[-1,:]
-		u = Sol.U[-1]
-		u2 = Sol.U[0]
-		Pt,Tt = self.total_prop(gas,u)
-		Pt0, Tt0 = self.total_prop(gas2,u2)
-		mdot = self.mdot_compressible2(gas,Pt,Tt)
-		keyboard()
-		
-		
 	def friction_factor(self,Re):
 		
 		A = -2*np.log10(12/Re)
@@ -1306,209 +684,6 @@ class WSR():
 		
 		return f
 
-	def mdot_compressible2(self,gas,Pt,Tt):#,Dt):
-		
-		#Pt = self.gas.P
-		#Tt = gas.T
-		gamma = gas.cp/gas.cv
-		R = 8314/gas.mean_molecular_weight
-		Ma = 1
-		
-		return self.At*Pt*np.sqrt(gamma/(R*Tt))*Ma*(1+(gamma-1)/2*Ma**2)**(-(gamma+1)/(2*(gamma-1)))
-	
-	def set_PFR_inlet(self,T,P,Y,mdot):
-		self.PFR_inlet_gas = ct.Solution(self.reaction_mechanism)
-		self.PFR_inlet_gas.TPY = T,P,Y
-		self.PFR_mdot = mdot
-	
-	def set_PFR_outlet(self,outlet_BC_type,P=101325,At=1):
-		
-		self.PFR_outlet_BC = outlet_BC_type
-		self.PFR_outlet_gas = ct.Solution(self.reaction_mechanism)
-		self.PFR_outlet_gas.TPY = 300,P,'N2:1'
-		self.PFR_At = At
-		
-	
-	def PFR_soot(self,z,Ac):#,P0_guess=101325):
-		# Solve Plug Flow Reactor as a series of 0-D WSR
-		# Using coupled soot calc
-
-
-		# Total Volume:
-		Vt = np.sum(np.diff(z)*Ac)
-		
-		self.def_inlet_gas(self.PFR_inlet_gas.T,self.PFR_inlet_gas.P,self.PFR_inlet_gas.Y)
-		self.def_outlet(self.PFR_outlet_BC,P=self.PFR_outlet_gas.P,At =self.PFR_At)
-		# Starting Pressure
-		self.WSR(Vt,self.PFR_mdot)
-		self.integrate_coupled(1e-5,1,convergence_criteria=1e-3)
-		keyboard()
-		P0 = self.gas.P
-		self.def_outlet('P',P=P0)
-		
-		# Solve for minimum required WSR reactor
-		Vmin = self.blowout_V(1e-10)
-		z0 = Vmin/Ac
-		
-		if z0 > z[0]:
-			z_pts = z[:]
-			z_pts[0] = z0
-		else:
-			z_pts = np.append(z0,z)
-		
-		# Number of reactors
-		n_reactors = len(z_pts)		
-		#n data pts
-		# [z,T,P,Yi,M,P,Tp,U,mdot_g,mdot_s]
-		n_dat = 1+1+1+self.gas.n_species+self.M_moments+self.P_moments+4
-		
-		
-		P0_dist = P0*np.ones(n_reactors)
-		
-		P_dist = np.copy(P0_dist)
-		
-		# Define Vec to store DATA
-		Sol = np.zeros([n_reactors,n_dat])	
-		
-		
-		fv = lambda :self.soot_properties(self.M)[1]
-		rho_mix = lambda : 1800*fv()+self.gas.density*(1-fv())
-		
-		
-		while True:
-			self.inlet_Moments([0,0,0,0,0,0])
-			self.def_inlet_gas(self.PFR_inlet_gas.T,self.PFR_inlet_gas.P,self.PFR_inlet_gas.Y)
-			self.def_outlet('compressible',P=P_dist[1],At=Ac)
-			#self.def_outlet('compressible',P=3563607.142857143,At=Ac)
-			self.WSR(Vmin,self.PFR_mdot)		
-			self.integrate_coupled(1e-5,1,convergence_criteria=1e-3)
-			
-			#rho_mix = 1800*fv()+self.gas.density*(1-fv())
-			
-			Um = self.PFR_mdot/(rho_mix()*Ac)
-			
-			mdot_g = self.mdot_out_func()
-			mdot_s = self.mdot_eat
-			P_dist[0] = self.gas.P
-			Sol[0,:] = np.hstack([z[0],self.gas.T,self.gas.P,self.gas.Y,self.M,self.P,self.Tp,Um,mdot_g,mdot_s])
-			
-			# Integrate Coupled
-			for i,_ in enumerate(z_pts[1:-1],start=1):
-				
-				dV = (z_pts[i]-z_pts[i-1])*Ac
-				
-				self.def_inlet_gas(self.gas.T,self.gas.P,self.gas.Y)
-				self.inlet_Moments(self.M)
-				self.def_outlet('compressible',P=P_dist[i+1],At=Ac)
-				self.WSR(dV,mdot_g)
-				self.integrate_coupled(1e-5,1,convergence_criteria=1e-3)
-				
-				Um = self.PFR_mdot/(rho_mix()*Ac)
-				mdot_g = self.mdot_out_func()
-				mdot_s += self.mdot_eat
-				
-				P_dist[i] = self.gas.P
-				
-				Sol[i,:] = np.hstack([z[i],self.gas.T,self.gas.P,self.gas.Y,self.M,self.P,self.Tp,Um,mdot_g,mdot_s])
-			
-			dV = (z_pts[-1] - z_pts[-2])*Ac
-			self.def_inlet_gas(self.gas.T,self.gas.P,self.gas.Y)
-			self.inlet_Moments(self.M)
-			self.def_outlet(self.PFR_outlet_BC,P=self.PFR_outlet_gas.P,At =self.PFR_At)
-			self.WSR(dV,mdot_g)
-			self.integrate_coupled(1e-5,1,convergence_criteria=1e-3)
-			Um = self.PFR_mdot/(rho_mix()*Ac)
-			mdot_g = self.mdot_out_func()
-			mdot_s += self.mdot_eat
-			P_dist[-1] = self.gas.P
-			Sol[-1,:] = np.hstack([z[-1],self.gas.T,self.gas.P,self.gas.Y,self.M,self.P,self.Tp,Um,mdot_g,mdot_s])
-			
-			
-			self.PFR_Sol = Sol
-			keyboard()
-			P0_dist = np.copy(P_dist)
-
-	
-	def PFR_no_soot(self,z_pts,Ac,inlets,P0):
-		# Solve Plug Flow Reactor as a series of 0-D WSR
-			
-		n_reactors = len(z_pts)
-
-		# Def Vec to store DATA
-		Sol = ct.SolutionArray(self.gas,extra=['z','U'])
-		
-		mix,Q = self.mix_pfr_inlet(inlets[0])
-		self.gas.TPY = mix.T,mix.P,mix.Y			
-		mdot = mix.mass
-		
-		dz = z_pts[0]
-		V = Ac[0]*dz
-		
-		# Run 1st WSR in chain
-		self.def_inlet_gas(self.gas.T,P0,self.gas.Y)
-		self.gas.equilibrate('HP')
-		self.WSR_P(V,mdot,Q=Q)
-		
-		P1 = self.gas.P
-		u1 = mdot/(self.gas.density*Ac[0])
-		Sol.append(self.gas.state,z=z_pts[0],U=u1)
-		
-		for i,z in enumerate(z_pts[1:],start=1):
-
-			dz = z_pts[i]-z_pts[i-1]
-
-			V = Ac[i]*dz
-			D = np.sqrt(4*Ac[i]/np.pi)
-			
-			Q = 0
-			if inlets[i]:
-				inlets[i].append([self.gas.T,self.gas.P,self.gas.Y,mdot,0])
-				mix,Q = self.mix_pfr_inlet(inlets[i])
-				self.gas.TPY = mix.T,mix.P,mix.Y
-				mdot= mix.mass
-				
-			
-			self.def_inlet_gas(self.gas.T,self.gas.P,self.gas.Y)
-			u2 = u1
-
-			count = 0
-			
-			
-			while True:
-				count+=1
-				u2i = u2
-				
-				
-				P2 = P1-mdot/Ac[i]*(u2-u1)
-				Ploss = -4/D*self.tau_wall(u2,D)*dz
-				P2+= Ploss
-				
-				#P2 = P1
-				
-				self.inlet_gas.TPY = self.inlet_gas.T, P2, self.inlet_gas.Y
-								
-				try:
-					self.WSR_P(V,mdot,Q=Q)
-				except:
-					keyboard()
-				
-				u2 = mdot/(self.gas.density*Ac[i])
-				
-				if np.abs(u2-u2i)<1e-3:
-					break
-				
-				if count>100:
-					keyboard()
-						
-			
-			u1 = u2
-			P1 = self.gas.P
-			
-			Sol.append(self.gas.state,z=z_pts[i],U=u1)
-			
-			# Save DATA 
-		return Sol
-	
 	def tau_wall(self,u,D):
 		# Calculate Wall Shear Stress
 		
@@ -1520,95 +695,6 @@ class WSR():
 		# Calculate Shear Stress
 		return self.gas.density*u**2/2*f
 		
-	
-	def WSR_P(self,vol,mdot,Q=0,Pc=None):
-		# Solve WSR with constant P
-		
-		inlet_gas = ct.Solution(self.reaction_mechanism)
-		inlet_gas.TPY = self.inlet_gas.T, self.inlet_gas.P, self.inlet_gas.Y
-
-		if self.solve_droplet:
-			
-			Y_gas = self.inlet_gas.Y
-			Y_liq = self.droplet.gas.Y
-			
-			Y_mix = (Y_gas*self.inlet_gas_mdot + Y_liq*self.liquid_mdot)/ \
-				(self.inlet_gas_mdot+self.liquid_mdot)
-		
-			inlet_gas.TPY = self.inlet_gas.T, self.inlet_gas.P, Y_mix
-			mdot+= self.liquid_mdot
-			
-			# Equilibrate gas
-			self.gas.TPY = inlet_gas.TPY
-			self.gas.equilibrate('UV')
-		
-		# Create Inlet Reservoir
-		inlet = ct.Reservoir(inlet_gas)
-		
-		# Create Ideal Gas Reactor with equilibrium products
-		if Pc is not None:
-			self.gas.TPY = self.gas.T, Pc, self.gas.Y
-
-		#Exhaust
-		exhaust = ct.Reservoir(self.gas)
-			
-		reactor = ct.IdealGasReactor(self.gas)
-		reactor.volume = vol
-	
-		inlet_mfc = ct.MassFlowController(inlet,reactor,mdot=mdot)	
-		outlet = ct.PressureController(reactor,exhaust,master=inlet_mfc,K=1e-5)
-		
-		if self.solve_droplet:
-			Q = self.droplet.LHV*self.liquid_mdot
-			Wall = ct.Wall(reactor,exhaust,Q=Q)
-
-		sim = ct.ReactorNet([reactor])
-		
-		try:
-			sim.advance_to_steady_state()
-		except:
-			#self.tres = 0
-			#self.vol = 0
-			return
-
-		#self.tres = self.gas.density*vol/mdot
-		#self.vol = vol
-	
-	def WSR_P2(self,vol,mdot,u1,Ac,dx,Q=0):
-		
-		D = np.sqrt(4*Ac/np.pi)
-		# Create Inlet Reservoir
-		inlet = ct.Reservoir(self.inlet_gas)
-	
-		reactor = ct.IdealGasReactor(self.gas)
-		reactor.volume = vol
-	
-		exhaust = ct.Reservoir(self.inlet_gas)
-	
-		def k(dp):
-			u2 = mdot/(self.gas.density*Ac)
-			
-			P = self.inlet_gas.P - self.gas.density*u2*(u2-u1)
-			
-			Re = self.gas.density*u2*D/self.gas.viscosity
-			f = self.ff(Re)
-			Ploss = -self.gas.density*u2**2*f*2/D*dx
-			
-			P+=Ploss
-			
-			#P = 251*101325/14.7
-			
-			print(P*14.7/101325,self.gas.P*14.7/101325)
-			print(Ploss,u2)
-			
-			return np.max([0,self.gas.P-P])
-			
-		outlet = ct.Valve(reactor,exhaust,K=k)
-	
-		sim = ct.ReactorNet([reactor])
-		
-		keyboard()
-	
 	
 	def total_prop(self,gas,u):
 		
@@ -1682,6 +768,7 @@ class WSR():
 		if self.solve_droplet:
 			#self.WSR_droplet_SS_vol(vol)
 			print('CLEAN UP WSR!')
+			keyboard()
 			return
 
 			Y_gas = self.inlet_gas.Y
@@ -1742,291 +829,6 @@ class WSR():
 		self.mdot = mdot
 		self.vol = vol
 
-	def WSR_droplet(self,tres,Pc=None):
-		# Solve WSR properties with droplet
-
-		# Define inlet gas, with droplet properties
-		Y_gas = self.inlet_gas.Y
-		Y_liq = self.droplet.gas.Y
-		
-		self.vaporized_mdot = np.max([0,self.droplet.m_gas*self.droplet.N_drops])
-
-		Y_mix = (Y_gas*self.inlet_gas_mdot + Y_liq*self.vaporized_mdot)/ \
-				(self.inlet_gas_mdot+self.vaporized_mdot)
-
-		# Define Mixed Inlet/Gas Object
-		if Pc is not None:
-			self.gas.TPY = self.inlet_gas.T,Pc,Y_mix
-		else:
-			self.gas.TPY = self.inlet_gas.T,self.outlet_gas.P,Y_mix
-		
-		# Add Mixed Inlet/Gas Object as inlet
-		inlet = ct.Reservoir(self.gas)
-
-		# Equilibrate inlet and use as IC for reactor
-		
-		self.gas.equilibrate('HP')
-
-		reactor = ct.IdealGasReactor(self.gas)
-
-		# Exhaust
-		exhaust = ct.Reservoir(self.gas)
-
-		# Set inlet mdot as function of residence time
-		mdot = lambda t: self.gas.density*reactor.volume/tres
-		inlet_mfc = ct.MassFlowController(inlet,reactor,mdot=mdot)
-		
-		# Outlet properties
-		#outletf = lambda dP: self.mdot_out_func()
-
-		#outlet = ct.Valve(reactor,exhaust,K=outletf)#
-		outlet = ct.PressureController(reactor,exhaust,master=inlet_mfc,K=1)
-				
-		# Vaporization enthalpy
-		Q= self.droplet.LHV*self.vaporized_mdot
-		#keyboard()
-		Wall=ct.Wall(reactor,exhaust,Q=Q)
-		
-		
-		# Simulation
-		sim = ct.ReactorNet([reactor])
-
-		TPY = self.gas.TPY
-
-		try:
-			# Get SS Solution
-			sim.advance(1)
-			sim.advance_to_steady_state()
-		except:
-			# Can probably delete this, this was from older buggier code
-			keyboard()
-			print('trying something else')
-			self.gas.TPY = TPY
-			reactor.insert(self.gas)
-			sim.reinitialize()
-			sim.set_initial_time(0)
-			try:
-				dt = 1e-2
-				print('Advancing slowly')
-				for i in range(0,1000):
-					sim.advance(sim.time+dt)
-					if self.gas.T<=self.inlet_gas.T*1.001:
-						break
-					else:
-						print(self.gas.T)
-
-			except:
-				print('something else failed')
-				keyboard()
-					
-			
-		# Calculate Gas Residence Time 
-		self.tres = self.gas.density*reactor.volume/mdot(sim.time)
-
-	def WSR_droplet2(self,vol):
-		# Solve WSR properties with droplet
-
-
-		# Define inlet gas, with droplet properties
-		Y_gas = self.inlet_gas.Y
-		Y_liq = self.droplet.gas.Y
-		
-		self.vaporized_mdot = np.max([0,self.droplet.m_gas*self.droplet.N_drops])
-
-		Y_mix = (Y_gas*self.inlet_gas_mdot + Y_liq*self.vaporized_mdot)/ \
-				(self.inlet_gas_mdot+self.vaporized_mdot)
-
-		# Define Mixed Inlet/Gas Object
-		self.gas.TPY = self.inlet_gas.T,self.outlet_gas.P,Y_mix
-		
-		# Add Mixed Inlet/Gas Object as inlet
-		inlet = ct.Reservoir(self.gas)
-
-		# Equilibrate inlet and use as IC for reactor
-		keyboard()
-		self.gas.equilibrate('HP')
-		keyboard()
-		reactor = ct.IdealGasReactor(self.gas)
-		reactor.volume = vol
-
-		# Exhaust
-		exhaust = ct.Reservoir(self.gas)
-
-		# Set inlet mdot as function of residence time
-		mdot = self.inlet_gas_mdot+self.vaporized_mdot
-		inlet_mfc = ct.MassFlowController(inlet,reactor,mdot=mdot)
-		
-		# Outlet properties
-		outletf = lambda dP: self.mdot_out_func()
-		#outlet = ct.Valve(reactor,exhaust,K=outletf)#
-		#outlet = ct.PressureController(reactor,exhaust,master=inlet_mfc,K=1)
-		#outlet = ct.MassFlowController(reactor,exhaust,master=inlet_mfc,K=1e4)
-
-		# Vaporization enthalpy
-		Q= self.droplet.LHV*self.vaporized_mdot
-		Wall=ct.Wall(reactor,exhaust,Q=Q)
-		
-		
-		# Simulation
-		sim = ct.ReactorNet([reactor])
-
-		TPY = self.gas.TPY
-		keyboard()
-		try:
-			# Get SS Solution
-			#sim.advance(1)
-			sim.advance_to_steady_state()
-			keyboard()
-		except:
-			keyboard()
-			# Can probably delete this, this was from older buggier code
-			keyboard()
-			print('trying something else')
-			self.gas.TPY = TPY
-			reactor.insert(self.gas)
-			sim.reinitialize()
-			sim.set_initial_time(0)
-			try:
-				dt = 1e-2
-				print('Advancing slowly')
-				for i in range(0,1000):
-					sim.advance(sim.time+dt)
-					if self.gas.T<=self.inlet_gas.T*1.001:
-						break
-					else:
-						print(self.gas.T)
-
-			except:
-				print('something else failed')
-				keyboard()
-					
-			
-		# Calculate Gas Residence Time 
-		self.tres = self.gas.density*reactor.volume/mdot
-
-
-	def WSR_droplet_SS(self,tres,Pc=None):#,mdot,Pc=False,Equil_IC=False):
-		# Solve WSR properties with droplet
-		
-
-		# Use some arbitrary high temperature gas as start and 
-		# calculate droplet properties
-		self.gas.TPY = 2000, self.outlet_gas.P,self.inlet_gas.Y
-		self.droplet.ct_gas(self.gas,tres,U=self.U_flow)
-
-		# Create iteration counter
-		iter = 0
-		# Loop WSR droplet system until convergence
-		while True:
-			# Increment iteration counter
-			iter+=1
-
-			# Store previous droplet size
-			Df0= np.copy(self.droplet.Df)
-
-			# Run droplet WSR with starting droplet size
-			self.WSR_droplet(tres,Pc=Pc)
-
-			if self.gas.T <400:
-				print('Temperature too low to sustain combustion')
-				print('Probably need to rethink something in WSR_droplet_SS')
-				break
-
-			# Calculate New Droplet Size
-			self.droplet.ct_gas(self.gas,tres,U=self.U_flow)
-
-			if np.abs(Df0-self.droplet.Df) <=1e-6*self.droplet.Df: 
-
-				print('Droplet WSR Converged')
-				return
-			
-			elif iter>500:
-
-				print('iter>100')
-				keyboard()
-
-	def WSR_droplet_vol(self,vol):
-		# Solve WSR properties with droplet
-
-		# Define inlet gas, with droplet properties
-		Y_gas = self.inlet_gas.Y
-		Y_liq = self.droplet.gas.Y
-		
-		self.vaporized_mdot = np.max([0,self.droplet.m_gas*self.droplet.N_drops])
-
-		Y_mix = (Y_gas*self.inlet_gas_mdot + Y_liq*self.vaporized_mdot)/ \
-				(self.inlet_gas_mdot+self.vaporized_mdot)
-
-		# Define Mixed Inlet/Gas Object
-		#self.gas.TPY = self.inlet_gas.T,self.outlet_gas.P,Y_mix
-		
-		self.gas.TPY = self.inlet_gas.T,self.outlet_gas.P*10,Y_mix
-
-		# Add Mixed Inlet/Gas Object as inlet
-		inlet = ct.Reservoir(self.gas)
-
-		# Equilibrate inlet and use as IC for reactor
-		
-		self.gas.equilibrate('HP')
-
-		reactor = ct.IdealGasReactor(self.gas)
-		reactor.volume = vol
-
-		# Exhaust
-		exhaust = ct.Reservoir(self.gas)
-
-		# Set inlet mdot as function of residence time
-		mdot = self.vaporized_mdot + self.inlet_gas_mdot
-		inlet_mfc = ct.MassFlowController(inlet,reactor,mdot=mdot)
-		
-		# Outlet properties
-		#outletf = lambda dP: self.mdot_out_func(mdot_set_pt=mdot)
-
-		#outlet = ct.Valve(reactor,exhaust,K=outletf)#
-		outlet = ct.PressureController(reactor,exhaust,master=inlet_mfc,K=1)
-				
-		# Vaporization enthalpy
-		Q= self.droplet.LHV*self.vaporized_mdot
-		Wall=ct.Wall(reactor,exhaust,Q=Q)
-		
-		
-		# Simulation
-		sim = ct.ReactorNet([reactor])
-
-		TPY = self.gas.TPY
-		try:
-			# Get SS Solution
-			#sim.advance(1)
-			#keyboard()
-			sim.advance_to_steady_state()
-			self.U_flow = mdot/(self.gas.density*self.Ac)
-
-		except:
-			# Can probably delete this, this was from older buggier code
-			keyboard()
-			print('trying something else')
-			self.gas.TPY = TPY
-			reactor.insert(self.gas)
-			sim.reinitialize()
-			sim.set_initial_time(0)
-			try:
-				dt = 1e-2
-				print('Advancing slowly')
-				for i in range(0,1000):
-					sim.advance(sim.time+dt)
-					if self.gas.T<=self.inlet_gas.T*1.001:
-						break
-					else:
-						print(self.gas.T)
-
-			except:
-				print('something else failed')
-				keyboard()
-					
-			
-		# Calculate Gas Residence Time 
-		self.tres = self.gas.density*reactor.volume/mdot
-
 	def vap_eq_ratio(self,per_vap,return_stoich_per=False):
 		# Calculate equivalence ratio for a certain percent
 		# of vaporized propellants
@@ -2059,8 +861,6 @@ class WSR():
 					return mid
 		else:
 			return self.gas.get_equivalence_ratio()
-
-
 
 
 	def ct_WSR_droplet(self,vol,per_vap,per_vap_previous=0,count=0,debug=False):
@@ -2148,48 +948,6 @@ class WSR():
 			count=count+1)
 			return per_vap
 
-	def WSR_droplet_SS_vol(self,vol,restart=False):#,mdot,Pc=False,Equil_IC=False):
-		# Solve WSR properties with droplet
-		
-		# Use some arbitrary high temperature gas as start and 
-		# calculate droplet properties
-		if restart != True:
-			self.gas.TPY = 2000, self.outlet_gas.P,self.inlet_gas.Y
-			
-			self.tres = self.gas.density*vol/(self.inlet_gas_mdot)
-
-			self.droplet.ct_gas(self.gas,self.tres,U=self.U_flow)
-		else:
-			self.droplet.ct_gas(self.gas,self.tres,U=self.U_flow)
-
-		# Create iteration counter
-		iter = 0
-		# Loop WSR droplet system until convergence
-		while True:
-			# Increment iteration counter
-			iter+=1
-
-			# Store previous droplet size
-			Df0= np.copy(self.droplet.Df)
-
-			# Run droplet WSR with starting droplet size
-			self.WSR_droplet_vol(vol)
-
-			# Calculate New Droplet Size
-			self.droplet.ct_gas(self.gas,self.tres,U=self.U_flow)
-			
-			if np.abs(Df0-self.droplet.Df) <= self.droplet.Df*1e-6: 
-
-				print('Droplet WSR Converged')
-
-				return
-			
-			elif iter>500:
-
-				print('iter>100')
-				keyboard()
-
-
 
 	def WSR_tres(self,tres,Treactor=None):
 		# Calculate WSR properties based on residence time
@@ -2242,7 +1000,10 @@ class WSR():
 		return self.gas.concentrations[self.gas.species_index(specie)]*1e-3
 	
 	def Newton_Step(self):
+		# OLD
 		# Newton Iteration Step to find SS Moment Solution
+		# USED IN OLD SOLUTION APPROACH BUT MAYBE SHOULD LOOK BACK INTO IT
+		# TO SPEED UP CONVERGENCE WITH NEW APPROACH
 		
 		# Get dlogM and dlogP rates
 		dMdt, dPdt,_,_ = self.dlog_rates()
@@ -2312,694 +1073,7 @@ class WSR():
 		#	self.P = self.P*np.exp(lam*dS_P/1e5)
 		#	self.P[0] = self.M[0]
 	
-	
-	def debug_check(self):
-		
-		keyboard()
-		#self.M = np.array([300,400,500,600,700,800])
-		#self.P = np.array([2,3])
-		#inputstuff = np.append(self.M,self.P)
-		
-		
-		M = np.array([4.30452465e+12, 1.59130911e+20, 1.81773347e+30, 8.70929437e+40, \
-       7.93009762e+51, 1.37944682e+63])
-		Pm = 0
-		T = 1814.0215498973685
-		P = 1735645.4050155499
-		C2H2 = 6.11970404256552e-06
-		H = 7.926248798897404e-09
-		H2 = 3.9080188024690996e-05
-		H2O = 1.5463252411997097e-05
-		O2 = 8.622381675854953e-08
-		OH = 0
-			
-		
-		Out = momic.momic.calculate_source(M,Pm,	\
-		T, P,						\
-		C2H2, 				\
-		H, 					\
-		H2, 					\
-		H2O, 					\
-		O2, 					\
-		OH )					\
-		
-		# Split MOMIC Rates Outputs
-		W = Out[0]
-		G = Out[1]
-		R = Out[2]
-		Hr = Out[3]
-		Ragg = Out[4]
-	
-		rC2H2 = Out[5]*1e3
-		rCO = Out[6]*1e3
-		rH = Out[7]*1e3
-		rH2 = Out[8]*1e3
-		rH2O = Out[9]*1e3
-		rO2 = Out[10]*1e3
-		rOH  = Out[11]*1e3
-	
-	
-		SM = W+G+R
-		SP = Hr + Ragg
-		
-		keyboard()
-		#J = momic.momic.jacobian(inputstuff,6,0, 	\
-		#	self.gas.T, self.gas.P, 		\
-		#	self.concentration('C2H2'), 			\
-		#	self.concentration('H'), 				\
-		#	self.concentration('H2'),				\
-		#	self.concentration('H2O'), 				\
-		#	self.concentration('O2'), 				\
-		#	self.concentration('OH') )
-			
-		#Jagg = momic.momic.calc_jacobian_no_aggregate(self.M, 	\
-		#	self.gas.T, self.gas.P, 		\
-		#	self.concentration('C2H2'), 			\
-		#	self.concentration('H'), 				\
-		#	self.concentration('H2'),				\
-		#	self.concentration('H2O'), 				\
-		#	self.concentration('O2'), 				\
-		#	self.concentration('OH') )
-		
-		#J = J[0:6,0:6]
 
-		#J_log = momic.momic.jacobian_log(inputstuff,6,0, 	\
-		#	self.gas.T, self.gas.P, 		\
-		#	self.concentration('C2H2'), 			\
-		#	self.concentration('H'), 				\
-		#	self.concentration('H2'),				\
-		#	self.concentration('H2O'), 				\
-		#	self.concentration('O2'), 				\
-		#	self.concentration('OH') )
-		
-		#J_log = J_log[0:6,0:6]
-		
-		#JJ = J[5,:]/self.M[5]
-			
-
-		#J[0,:] /= self.M[0]
-		#J[1,:] /=self.M[1]
-		#J[2,:] /=self.M[2]
-		#J[3,:] /=self.M[3]
-		#J[4,:] /=self.M[4]
-		#J[5,:] /=self.M[5]
-		
-		#J += - SM/self.M**2*np.identity(6)
-		
-		print('STOPPING AT END OF DEBUG_CHECK')
-		keyboard()
-	
-	
-	def rates(self):
-		# Calculate dM/dt, dP/dt
-	
-		# Get Source Terms
-
-		Out = momic.momic.calculate_source(self.M,self.P,	\
-				self.gas.T, self.gas.P,						\
-				self.concentration('C2H2'), 				\
-				self.concentration('H'), 					\
-				self.concentration('H2'), 					\
-				self.concentration('H2O'), 					\
-				self.concentration('O2'), 					\
-				self.concentration('OH') )					\
-		
-		
-		# Split MOMIC Rates Outputs
-		W = Out[0]
-		G = Out[1]
-		R = Out[2]
-		Hr = Out[3]
-		Ragg = Out[4]
-	
-		SM = W+G+R
-		SP = Hr + Ragg
-			
-		
-		# Calculate dM/dt 
-		dM = SM - self.M/self.tres
-		
-		if self.aggregation:
-			# Calculate dP/dt
-			dP = SP - self.P/self.tres
-		else:
-			dP = 0
-		
-		return dM, dP
-	
-	def dlog_rates(self):
-		# Calculate dlogM/dt, dlogP/dt
-
-		# Get Source Term
-			
-		Out = momic.momic.calculate_source(self.M,self.P,	\
-				self.gas.T, self.gas.P,						\
-				self.concentration('C2H2'), 				\
-				self.concentration('H'), 					\
-				self.concentration('H2'), 					\
-				self.concentration('H2O'), 					\
-				self.concentration('O2'), 					\
-				self.concentration('OH') )					\
-				
-		# Split MOMIC Rates Outputs
-		W = Out[0]
-		G = Out[1]
-		R = Out[2]
-		Hr = Out[3]
-		Ragg = Out[4]
-				
-		#SM = G+R
-		
-		SM = W+G+R
-		SP = Hr + Ragg
-		
-		# Calculate dLogM
-		dlogM = SM/self.M - 1/self.tres + self.inlet_M/(self.M*self.tres)
-		
-	
-		if self.aggregation:
-			if any(SP!=0):
-				# Calculate dlogP
-				dlogP = SP/self.P - 1/self.tres + self.inlet_P/(self.P*self.tres)
-			else:
-				dlogP = SP
-		else:
-			dlogP = []
-		
-			
-		if any(np.isnan(W)):
-			pass
-			#keyboard()
-		if any(np.isnan(G)):
-			#keyboard()
-			pass
-		if any(np.isnan(R)):
-			pass
-			#keyboard()
-		
-		# Did this for aggregate case
-		#Out2 = momic.momic.calculate_source2(self.M,self.P,	\
-		#		self.gas.T, self.gas.P,						\
-		#		self.concentration('C2H2'), 				\
-		#		self.concentration('H'), 					\
-		#		self.concentration('H2'), 					\
-		#		self.concentration('H2O'), 					\
-		#		self.concentration('O2'), 					\
-		#		self.concentration('OH'),1)								
-		
-		#print(self.tnow)
-
-		return dlogM, dlogP, [W,G,R,Hr,Ragg], np.array(Out[5:])
-		
-
-	def scipy_ode_uncoupled(self,t,y):
-
-		# Decrease time step if Moments are greater than exp(300) or if M(0) > M(1), M(2),...
-		#if any(np.exp(y)>1e300):
-		#	keyboard()
-		#	self.decrease_dt = True	
-			#return np.zeros(np.size(y))
-
-		#if any(np.diff(np.exp(y[0:np.size(self.M)]))<=1e-5):	#y[0] > y[1:np.size(self.M)]):
-		#	keyboard()
-		#	self.decrease_dt = True
-		#	return np.zeros(np.size(y))
-					
-		#if any(np.exp(y)< 0):
-			#keyboard()
-			#self.decrease_dt = True
-		#	return np.zeros(np.size(y))
-		
-		if any(np.isnan(y)):
-			pass
-			#keyboard()
-		#	self.decrease_dt = True
-		#	return np.zeros(np.size(y))
-			
-			
-		#M = np.exp(y[0:np.size(self.M)])
-		
-		
-		self.M = np.exp(y[0:np.size(self.M)])
-		
-		if self.aggregation:
-			self.P = np.exp(y[np.size(self.M):])
-		else:
-			self.P = []	
-		
-		dlogMdt, dlogPdt, __, species_rates = self.dlog_rates()
-		
-		#if any(dlogPdt !=0):
-		#	keyboard()
-		
-		
-		rates = np.hstack([dlogMdt,dlogPdt])
-		
-		self.rates = rates
-			
-		return rates
-	
-	def source_terms_gas(self,t,y):
-		# Calculate dTdt dYdt for WSR for gas chemistry
-		# Input y as [T,yi]
-		
-		
-		T = y[0]
-		gas = self.gas
-		inlet = self.inlet_gas
-		gas.TPY = T,self.gas.P,y[1:]
-		
-		
-		rho = gas.density 
-		tres = self.tres #rho*self.vol/self.mdot
-		wdot = gas.net_production_rates
-		
-		
-		
-		dTdt = -(np.dot(gas.partial_molar_enthalpies, wdot)/(rho*gas.cp)) + \
-		np.dot((inlet.partial_molar_enthalpies-gas.partial_molar_enthalpies)/inlet.molecular_weights,inlet.Y)/(tres*gas.cp)
-
-		#dTdt = dTdt
-		
-		dYdt = wdot*gas.molecular_weights/(rho) + (inlet.Y-gas.Y)/(tres)
-		
-		return np.hstack([dTdt,dYdt])
-	
-	
-	
-	def source_terms_coupled(self,t,y):
-			
-		# Check Solution
-		if any(np.isnan(y)):
-			keyboard()
-		#	self.decrease_dt = True
-
-		#elif y[iT]>3000:
-		#	self.decrease_dt = True
-		#	keyboard()
-		elif y[self.indx['T']]<100:
-		#	self.decrease_dt = True
-			#y = self.state
-			keyboard()
-		
-		#	return y*0
-#		elif any(y[iM:imp]>300):
-		#	self.decrease_dt = True
-
-#		elif any(np.diff(y[iM:iP])<0) or any(np.diff(y[iP:imp])<0):
-		#	self.decrease_dt = True
-		#	keyboard()
-
-			
-		# Assign solution to gas object
-		self.gas.TDY = y[self.indx['T']],y[self.indx['D']],y[self.indx['Y']]
-
-		# Assign current solution to momic object attribute
-		self.M = np.exp(y[self.indx['M']])
-		self.P = np.exp(y[self.indx['P']])		
-		self.mp = y[self.indx['mp']]
-		self.Tp = y[self.indx['Tp']]
-
-		# Gather info
-		mdot_gas_in = self.mdot
-		h_gas_in = self.inlet_gas.h
-		
-		u_gas = self.gas.partial_molar_int_energies
-		Y_gas_in = self.inlet_gas.Y
-		Y_gas = self.gas.Y
-		MW = self.gas.molecular_weights
-		V = self.vol
-		rho = self.gas.density
-		cv = self.gas.cv
-		Q_source = 0
-		wdot = self.gas.net_production_rates
-		
-		# Initialize soot production rate vector
-		wdot_soot = np.zeros(self.gas.n_species)
-
-		# Calculate gas residence time in WSR
-		self.tres = self.gas.density*self.vol/mdot_gas_in
-				
-		# Calculate Moment Source Terms
-		dlogMdt, dlogPdt, __, species_rates = self.dlog_rates()
-		
-		# Output species rates are in mol/cm^3
-		# Convert to kmol/m^3 (Cantera units)
-		species_rates*=1e3 
-		
-		# Split species rate info
-		# Modify/alter species rates here
-		rC2H2 = species_rates[0]
-		rCO = species_rates[1]
-		rH = species_rates[2]
-		rH2 = species_rates[3]
-		rH2O = species_rates[4]
-		rO2 = species_rates[5]
-		rOH  = species_rates[6]
-		
-		# Assign to soot consumption rate vector
-		wdot_soot[self.gas.species_index('C2H2')] += rC2H2
-		wdot_soot[self.gas.species_index('CO')] += rCO
-		wdot_soot[self.gas.species_index('H')] += rH
-		wdot_soot[self.gas.species_index('H2')] += rH2
-		wdot_soot[self.gas.species_index('H2O')] += rH2O
-		wdot_soot[self.gas.species_index('O2')] += rO2
-		wdot_soot[self.gas.species_index('OH')] += rOH
-		
-		
-		#print('WDot soot = 0')
-		#wdot_soot[:] = 0
-		
-		
-		# Total Gas Consumption Rate
-		mdot_eat = np.dot(wdot_soot,MW)*self.vol
-		
-		self.mdot_eat = mdot_eat
-		# Heat Terms
-		Q_h = 1000
-		
-		d_s = self.MOMIC.soot_properties(self.M)[0]
-		Ap = np.pi*d_s**2
-		Q_source = Q_h*Ap*(self.gas.T-self.Tp)*0
-		
-		mdot_out =  self.mdot_out_func() #self.mdot + 1e-2*(self.gas.P-self.inlet_gas.P)#self.mdot_compressible()#.308)
-
-		if self.solve_energy:
-		
-			dTdt = mdot_gas_in*(h_gas_in - np.dot(u_gas/MW,Y_gas_in))-self.gas.P/rho*mdot_out-np.dot(u_gas,wdot)*V #+ Q_source
-			
-			#dTdt += -np.dot(u_gas,wdot2)*V
-			
-			dTdt += -self.M[0]*Q_source*self.vol
-			
-			dTdt /= rho*V*cv
-				
-		else:
-			dTdt = 0
-		
-		
-		# Calculate Rates
-		dTpdt = 0#(Q_source)#-0.9*5.67e-8*Ap*(self.Tp**4-300**4)+np.dot(u_gas,wdot_soot)*4/3*np.pi*(d_s/2)**3
-		m_soot = (self.M[1]*1.9944235e-26)/(self.M[0])
-		Cp_p = 840
-		dTpdt *= 1/(m_soot*Cp_p)
-		
-		drhodt = ((self.mdot)-mdot_out+mdot_eat)/self.vol
-
-		dmpdt = -mdot_eat - self.mp/self.tres
-		
-		
-		self.drhodt = drhodt
-		self.dTdt = dTdt
-		self.mdot_out = mdot_out
-		
-		#if mdot_eat>0:
-		#	keyboard()
-		
-		#if self.mp<0:
-		#	if self.time>1e-3:
-		#		keyboard()
-		
-		dYdt = wdot*MW/(rho) + (Y_gas_in-Y_gas)*mdot_gas_in/(rho*V) + wdot_soot*MW/(rho) - Y_gas*mdot_eat/(rho*self.vol)
-		
-		# Rates output vector
-		rates = np.hstack([dTdt,drhodt,dYdt,dlogMdt,dlogPdt,dmpdt,dTpdt])
-		#self.state_rates = rates
-		return rates
-	
-		
-	def source_terms_coupled_closed(self,t,y):
-			
-		# Check Solution
-		if any(np.isnan(y)):
-			keyboard()
-		#	self.decrease_dt = True
-
-		#elif y[iT]>3000:
-		#	self.decrease_dt = True
-		#	keyboard()
-		elif y[self.indx['T']]<100:
-		#	self.decrease_dt = True
-			#y = self.state
-			keyboard()
-		
-		#	return y*0
-#		elif any(y[iM:imp]>300):
-		#	self.decrease_dt = True
-
-#		elif any(np.diff(y[iM:iP])<0) or any(np.diff(y[iP:imp])<0):
-		#	self.decrease_dt = True
-		#	keyboard()
-
-			
-		# Assign solution to gas object
-		self.gas.TDY = y[self.indx['T']],y[self.indx['D']],y[self.indx['Y']]
-
-		# Assign current solution to momic object attribute
-		self.M = y[self.indx['M']]
-		self.P = y[self.indx['P']]
-		self.mp = y[self.indx['mp']]
-		self.Tp = y[self.indx['Tp']]
-
-		# Gather info
-		mdot_gas_in = self.mdot
-		h_gas_in = self.inlet_gas.h
-		
-		u_gas = self.gas.partial_molar_int_energies
-		Y_gas_in = self.inlet_gas.Y
-		Y_gas = self.gas.Y
-		MW = self.gas.molecular_weights
-		V = self.vol
-		rho = self.gas.density
-		cv = self.gas.cv
-		Q_source = 0
-		wdot = self.gas.net_production_rates
-		
-		# Initialize soot production rate vector
-		wdot_soot = np.zeros(self.gas.n_species)
-		
-		# Calculate gas residence time in WSR
-		self.tres = self.gas.density*self.vol/mdot_gas_in
-				
-		# Calculate Moment Source Terms
-		SM, SP, __, species_rates = self.soot_rates()
-		
-		# Output species rates are in mol/cm^3
-		# Convert to kmol/m^3 (Cantera units)
-		species_rates*=1e3 
-		
-		# Split species rate info
-		# Modify/alter species rates here
-		rC2H2 = species_rates[0]
-		rCO = species_rates[1]
-		rH = species_rates[2]
-		rH2 = species_rates[3]
-		rH2O = species_rates[4]
-		rO2 = species_rates[5]
-		rOH  = species_rates[6]
-		
-		# Assign to soot consumption rate vector
-		wdot_soot[self.gas.species_index('C2H2')] += rC2H2
-		wdot_soot[self.gas.species_index('CO')] += rCO
-		wdot_soot[self.gas.species_index('H')] += rH
-		wdot_soot[self.gas.species_index('H2')] += rH2
-		wdot_soot[self.gas.species_index('H2O')] += rH2O
-		wdot_soot[self.gas.species_index('O2')] += rO2
-		wdot_soot[self.gas.species_index('OH')] += rOH
-		
-		
-		#print('WDot soot = 0')
-		#wdot_soot[:] = 0
-		
-		
-		# Total Gas Consumption Rate
-		mdot_eat = np.dot(wdot_soot,MW)*self.vol
-		
-		self.mdot_eat = mdot_eat
-		# Heat Terms
-		Q_h = 1000
-		
-		d_s = self.soot_properties(self.M)[0]
-		Ap = np.pi*d_s**2
-		Q_source = Q_h*Ap*(self.gas.T-self.Tp)
-		
-		mdot_out =  self.mdot_out_func() #self.mdot + 1e-2*(self.gas.P-self.inlet_gas.P)#self.mdot_compressible()#.308)
-
-		if self.solve_energy:
-		
-			dTdt = -np.dot(u_gas,wdot)*V #+ Q_source
-			
-			#dTdt += -np.dot(u_gas,wdot2)*V
-			
-			dTdt += -self.M[0]*Q_source*self.vol
-			
-			dTdt /= rho*V*cv
-				
-		else:
-			dTdt = 0
-		
-		
-		# Calculate Rates
-		dTpdt = (Q_source)#-0.9*5.67e-8*Ap*(self.Tp**4-300**4)+np.dot(u_gas,wdot_soot)*4/3*np.pi*(d_s/2)**3
-		m_soot = (self.M[1]*1.9944235e-26)/(self.M[0])
-		Cp_p = 840
-		dTpdt *= 1/(m_soot*Cp_p)
-		
-		drhodt = mdot_eat/self.vol
-		dmpdt = -mdot_eat - self.mp/self.tres
-		
-		
-		#if mdot_eat>0:
-		#	keyboard()
-		
-		#if self.mp<0:
-		#	if self.time>1e-3:
-		#		keyboard()
-		
-		dYdt = wdot*MW/(rho) + wdot_soot*MW/(rho) - Y_gas*mdot_eat/(rho*self.vol)
-		
-		# Rates output vector
-		rates = np.hstack([dTdt,drhodt,dYdt,SM,SP,dmpdt,dTpdt])
-		#self.state_rates = rates
-		
-		return rates
-	
-	def source_terms_coupled_const_P(self,t,y):
-			
-		# Check Solution
-		if any(np.isnan(y)):
-			keyboard()
-		#	self.decrease_dt = True
-
-		#elif y[iT]>3000:
-		#	self.decrease_dt = True
-		#	keyboard()
-		elif y[self.indx['T']]<100:
-		#	self.decrease_dt = True
-			#y = self.state
-			keyboard()
-		
-		#	return y*0
-#		elif any(y[iM:imp]>300):
-		#	self.decrease_dt = True
-
-#		elif any(np.diff(y[iM:iP])<0) or any(np.diff(y[iP:imp])<0):
-		#	self.decrease_dt = True
-		#	keyboard()
-
-			
-		# Assign solution to gas object
-		self.gas.TPY = y[self.indx['T']],self.gas.P,y[self.indx['Y']]
-
-		# Assign current solution to momic object attribute
-		self.M = np.exp(y[self.indx['M']])
-		self.P = np.exp(y[self.indx['P']])		
-		self.mp = y[self.indx['mp']]
-		self.Tp = y[self.indx['Tp']]
-
-		# Gather info
-		mdot_gas_in = self.mdot
-		h_gas_in = self.inlet_gas.h
-		
-		h_gas = self.gas.partial_molar_enthalpies
-		Y_gas_in = self.inlet_gas.Y
-		Y_gas = self.gas.Y
-		MW = self.gas.molecular_weights
-		V = self.vol
-		rho = self.gas.density
-		cp = self.gas.cp
-		Q_source = 0
-		wdot = self.gas.net_production_rates
-		
-		# Initialize soot production rate vector
-		wdot_soot = np.zeros(self.gas.n_species)
-		
-		# Calculate gas residence time in WSR
-		self.tres = self.gas.density*self.vol/mdot_gas_in
-				
-		# Calculate Moment Source Terms
-		dlogMdt, dlogPdt, __, species_rates = self.dlog_rates()
-		
-		# Output species rates are in mol/cm^3
-		# Convert to kmol/m^3 (Cantera units)
-		species_rates*=1e3 
-		
-		# Split species rate info
-		# Modify/alter species rates here
-		rC2H2 = species_rates[0]
-		rCO = species_rates[1]
-		rH = species_rates[2]
-		rH2 = species_rates[3]
-		rH2O = species_rates[4]
-		rO2 = species_rates[5]
-		rOH  = species_rates[6]
-		
-		# Assign to soot consumption rate vector
-		wdot_soot[self.gas.species_index('C2H2')] += rC2H2
-		wdot_soot[self.gas.species_index('CO')] += rCO
-		wdot_soot[self.gas.species_index('H')] += rH
-		wdot_soot[self.gas.species_index('H2')] += rH2
-		wdot_soot[self.gas.species_index('H2O')] += rH2O
-		wdot_soot[self.gas.species_index('O2')] += rO2
-		wdot_soot[self.gas.species_index('OH')] += rOH
-		
-		
-		#print('WDot soot = 0')
-		#wdot_soot[:] = 0
-		
-		
-		# Total Gas Consumption Rate
-		mdot_eat = np.dot(wdot_soot,MW)*self.vol
-		
-		self.mdot_eat = mdot_eat
-		# Heat Terms
-		Q_h = 1000
-		
-		d_s = self.soot_properties(self.M)[0]
-		Ap = np.pi*d_s**2
-		Q_source = Q_h*Ap*(self.gas.T-self.Tp)
-		
-		#mdot_out =  self.mdot_out_func() #self.mdot + 1e-2*(self.gas.P-self.inlet_gas.P)#self.mdot_compressible()#.308)
-
-		if self.solve_energy:
-		
-			dTdt = mdot_gas_in*(h_gas_in - np.dot(h_gas/MW,Y_gas_in))-np.dot(h_gas,wdot)*V #+ Q_source
-			
-			
-			#dTdt += -np.dot(u_gas,wdot2)*V
-			
-			dTdt += -self.M[0]*Q_source*self.vol
-			
-			dTdt /= rho*cp*self.vol
-				
-		else:
-			dTdt = 0
-		
-		
-		# Calculate Rates
-		dTpdt = (Q_source)#-0.9*5.67e-8*Ap*(self.Tp**4-300**4)+np.dot(u_gas,wdot_soot)*4/3*np.pi*(d_s/2)**3
-		m_soot = (self.M[1]*1.9944235e-26)/(self.M[0])
-		Cp_p = 840
-		dTpdt *= 1/(m_soot*Cp_p)
-		
-		dmpdt = -mdot_eat - self.mp/self.tres
-		
-		
-		#if mdot_eat>0:
-		#	keyboard()
-		
-		#if self.mp<0:
-		#	if self.time>1e-3:
-		#		keyboard()
-		
-		dYdt = wdot*MW/(rho) + (Y_gas_in-Y_gas)*mdot_gas_in/(rho*V) + wdot_soot*MW/(rho) - Y_gas*mdot_eat/(rho*self.vol)
-		
-		# Rates output vector
-		rates = np.hstack([dTdt,dYdt,dlogMdt,dlogPdt,dmpdt,dTpdt])
-		#self.state_rates = rates
-		
-		return rates
-	
 	
 	def mdot_out_func(self,mdot_set_pt=0,K=1e-4):
 		
@@ -3028,563 +1102,7 @@ class WSR():
 		self.outlet_BC = outlet_BC_type
 		self.outlet_gas.TPY = 300, P, 'N2:1'
 		self.At = At
-		
-	def source_terms_coupled2(self,t,y):
 			
-		# Check Solution
-		if any(np.isnan(y)):
-			keyboard()
-		#	self.decrease_dt = True
-
-		#elif y[iT]>3000:
-		#	self.decrease_dt = True
-		#	keyboard()
-		elif y[self.indx['T']]<100:
-		#	self.decrease_dt = True
-			#y = self.state
-			keyboard()
-		
-		#	return y*0
-#		elif any(y[iM:imp]>300):
-		#	self.decrease_dt = True
-
-#		elif any(np.diff(y[iM:iP])<0) or any(np.diff(y[iP:imp])<0):
-		#	self.decrease_dt = True
-		#	keyboard()
-
-			
-		# Assign solution to gas object
-		self.gas.TDY = y[self.indx['T']],y[self.indx['D']],y[self.indx['Y']]
-
-		# Assign current solution to momic object attribute
-		self.M = np.exp(y[self.indx['M']])
-		self.P = np.exp(y[self.indx['P']])		
-		self.mp = y[self.indx['mp']]
-		self.Tp = y[self.indx['Tp']]
-
-		# Gather info
-		mdot_gas_in = self.mdot
-		h_gas_in = self.inlet_gas.h
-		
-		u_gas = self.gas.partial_molar_int_energies
-		Y_gas_in = self.inlet_gas.Y
-		Y_gas = self.gas.Y
-		MW = self.gas.molecular_weights
-		V = self.vol
-		rho = self.gas.density
-		cv = self.gas.cv
-		Q_source = 0
-		wdot = self.gas.net_production_rates
-		
-		# Initialize soot production rate vector
-		wdot_soot = np.zeros(self.gas.n_species)
-		
-		# Calculate gas residence time in WSR
-		self.tres = self.gas.density*self.vol/mdot_gas_in
-				
-		# Calculate Moment Source Terms
-		dlogMdt, dlogPdt, __, species_rates = self.dlog_rates()
-		
-		# Output species rates are in mol/cm^3
-		# Convert to kmol/m^3 (Cantera units)
-		species_rates*=1e3 
-		
-		# Split species rate info
-		# Modify/alter species rates here
-		rC2H2 = species_rates[0]
-		rCO = species_rates[1]
-		rH = species_rates[2]
-		rH2 = species_rates[3]
-		rH2O = species_rates[4]
-		rO2 = species_rates[5]
-		rOH  = species_rates[6]
-		
-		# Assign to soot consumption rate vector
-		wdot_soot[self.gas.species_index('C2H2')] += rC2H2
-		wdot_soot[self.gas.species_index('CO')] += rCO
-		wdot_soot[self.gas.species_index('H')] += rH
-		wdot_soot[self.gas.species_index('H2')] += rH2
-		wdot_soot[self.gas.species_index('H2O')] += rH2O
-		wdot_soot[self.gas.species_index('O2')] += rO2
-		wdot_soot[self.gas.species_index('OH')] += rOH
-		
-		# Total Gas Consumption Rate
-		mdot_eat = np.dot(wdot_soot,MW)*self.vol
-		
-		# Heat Terms
-		Q_h = 1000
-		
-		d_s = self.soot_properties(self.M)[0]
-		Ap = np.pi*d_s**2
-		Q_source = Q_h*Ap*(self.gas.T-self.Tp)
-		
-		
-		mdot_out = self.mdot_compressible()#.308)
-
-		
-		if self.solve_energy:
-		
-			dTdt = mdot_gas_in*(h_gas_in - np.dot(u_gas/MW,Y_gas_in))-self.gas.P/rho*mdot_out-np.dot(u_gas,wdot)*V #+ Q_source
-			
-			#dTdt += -np.dot(u_gas,wdot2)*V
-			
-			dTdt += -self.M[0]*Q_source*self.vol
-			
-			dTdt /= rho*V*cv
-				
-		else:
-			dTdt = 0
-		
-		
-		# Calculate Rates
-		dTpdt = (Q_source)#-0.9*5.67e-8*Ap*(self.Tp**4-300**4)+np.dot(u_gas,wdot_soot)*4/3*np.pi*(d_s/2)**3
-		m_soot = (self.M[1]*1.9944235e-26)/(self.M[0])
-		Cp_p = 840
-		dTpdt *= 1/(m_soot*Cp_p)
-		
-		drhodt = ((self.mdot)-mdot_out+mdot_eat)/self.vol
-		dmpdt = -mdot_eat - self.mp/self.tres
-		
-		
-		#if mdot_eat>0:
-		#	keyboard()
-		
-		#if self.mp<0:
-		#	if self.time>1e-3:
-		#		keyboard()
-		
-		dYdt = wdot*MW/(rho) + (Y_gas_in-Y_gas)*mdot_gas_in/(rho*V) + wdot_soot*MW/(rho) - Y_gas*mdot_eat/(rho*self.vol)
-		
-		# Rates output vector
-		rates = np.hstack([dTdt,drhodt,dYdt,dlogMdt,dlogPdt,dmpdt,dTpdt])
-		#self.state_rates = rates
-		
-		return rates
-	
-	
-	def source_terms_const_P(self,t,y):
-		
-		# Assign solution to gas object
-		#self.gas.TDY = y[self.indx['T']],y[self.indx['D']],y[self.indx['Y']]
-
-		if any(np.isnan(y)):
-			self.flag = True
-			return y*0
-		if any(y[self.indx['M']]<0):
-			self.flag = True
-			return y*0
-		if y[self.indx['T']]>5000 or y[self.indx['T']]<0:
-			self.flag = True
-			return y*0
-			
-		self.gas.TPY = y[self.indx['T']],self.gas.P,y[self.indx['Y']]
-
-		# Assign current solution to momic object attribute
-		self.M = y[self.indx['M']]
-		self.P = y[self.indx['P']]	
-		self.mp = y[self.indx['mp']]
-		self.Tp = y[self.indx['Tp']]
-
-		# Gather info
-		
-		u_gas = self.gas.partial_molar_int_energies
-		h_gas = self.gas.partial_molar_enthalpies
-		Y_gas = self.gas.Y
-		MW = self.gas.molecular_weights
-		V = self.vol
-		rho = self.gas.density
-		cp = self.gas.cp
-		Q_source = 0
-		wdot = self.gas.net_production_rates
-		
-		# Initialize soot production rate vector
-		wdot_soot = np.zeros(self.gas.n_species)
-		
-		# Calculate gas residence time in WSR
-		#self.tres = self.gas.density*self.vol/mdot_gas_in
-		
-		#if self.flagg == True:
-		#	print('Run')
-		#	print(y)
-		#	keyboard()
-		
-		#print('START')
-		# Calculate Moment Source Terms
-		dMdt, dPdt, __, species_rates = self.soot_rates()
-
-		#if self.flagg == True:
-		#	print('Stop')
-		#	keyboard()
-
-
-		# Output species rates are in mol/cm^3
-		# Convert to kmol/m^3 (Cantera units)
-		species_rates*=1e3 
-		
-		# Split species rate info
-		# Modify/alter species rates here
-		rC2H2 = species_rates[0]
-		rCO = species_rates[1]
-		rH = species_rates[2]
-		rH2 = species_rates[3]
-		rH2O = species_rates[4]
-		rO2 = species_rates[5]
-		rOH  = species_rates[6]
-		
-		# Assign to soot consumption rate vector
-		wdot_soot[self.gas.species_index('C2H2')] += rC2H2
-		wdot_soot[self.gas.species_index('CO')] += rCO
-		wdot_soot[self.gas.species_index('H')] += rH
-		wdot_soot[self.gas.species_index('H2')] += rH2
-		wdot_soot[self.gas.species_index('H2O')] += rH2O
-		wdot_soot[self.gas.species_index('O2')] += rO2
-		wdot_soot[self.gas.species_index('OH')] += rOH
-		
-		if self.coupled:
-			pass
-		else:
-			wdot_soot[:] = 0
-		
-		# Total Gas Consumption Rate (kg/s-m^3)
-		mdot_eat = np.dot(wdot_soot,MW)
-		
-		# Heat Terms
-		Q_h = 1000
-		sigma = 5.670373e-8
-		
-		d_s = self.soot_properties(self.M)[0]
-		Ap = np.pi*d_s**2
-		Q_source = Q_h*Ap*(self.gas.T-self.Tp)#+0.9*sigma*(self.gas.T**4-self.Tp**4)
-		
-		
-		if self.solve_energy:
-			dTdt = -np.dot(h_gas,wdot)
-			dTdt += -self.M[0]*Q_source
-			
-			dTdt /= rho*cp	
-		else:
-			dTdt = 0
-		
-		
-		# Calculate Rates
-		
-		
-		
-		dTpdt = (Q_source)# - 0.1*sigma*(self.Tp**4-300**4)
-		m_soot = (self.M[1]*1.9944235e-26)/(self.M[0])
-		Cp_p = 840
-		dTpdt *= 1/(m_soot*Cp_p)
-		
-		dmpdt = -mdot_eat
-		#keyboard()
-		
-		#if mdot_eat>0:
-		#	keyboard()
-		
-		#if self.mp<0:
-		#	if self.time>1e-3:
-		#		keyboard()
-		
-		dYdt = wdot*MW/(rho) + wdot_soot*MW/(rho) - Y_gas*mdot_eat/rho
-
-		# Rates output vector
-		rates = np.hstack([dTdt,dYdt,dMdt,dPdt,dmpdt,dTpdt])
-		#self.state_rates = rates
-		
-		
-		return rates
-	
-	
-	
-	def source_terms_coupled_pfr(self,t,y):
-				
-		# Check Solution
-		if any(np.isnan(y)):
-			keyboard()
-		#	self.decrease_dt = True
-
-		#elif y[iT]>3000:
-		#	self.decrease_dt = True
-		#	keyboard()
-		elif y[self.indx['T']]<100:
-		#	self.decrease_dt = True
-			#y = self.state
-			keyboard()
-		elif y[self.indx['D']]<0:
-			keyboard()
-		
-		#	return y*0
-#		elif any(y[iM:imp]>300):
-		#	self.decrease_dt = True
-
-#		elif any(np.diff(y[iM:iP])<0) or any(np.diff(y[iP:imp])<0):
-		#	self.decrease_dt = True
-		#	keyboard()
-
-		# Assign solution to gas object
-		self.gas.TDY = y[self.indx['T']],y[self.indx['D']],y[self.indx['Y']]
-
-		# Assign current solution to momic object attribute
-		self.M = np.exp(y[self.indx['M']])
-		self.P = np.exp(y[self.indx['P']])		
-		self.mp = y[self.indx['mp']]
-		self.Tp = y[self.indx['Tp']]
-
-		# Gather info
-		mdot_gas_in = self.mdot
-		h_gas_in = self.inlet_gas.h
-		
-		u_gas = self.gas.partial_molar_int_energies
-		Y_gas_in = self.inlet_gas.Y
-		Y_gas = self.gas.Y
-		MW = self.gas.molecular_weights
-		V = self.vol
-		rho = self.gas.density
-		cv = self.gas.cv
-		Q_source = 0
-		wdot = self.gas.net_production_rates
-		
-		# Initialize soot production rate vector
-		wdot_soot = np.zeros(self.gas.n_species)
-		
-		# Calculate gas residence time in WSR
-		self.tres = self.gas.density*self.vol/mdot_gas_in
-				
-		# Calculate Moment Source Terms
-		dlogMdt, dlogPdt, __, species_rates = self.dlog_rates()
-		
-		# Output species rates are in mol/cm^3
-		# Convert to kmol/m^3 (Cantera units)
-		species_rates*=1e3 
-		
-		# Split species rate info
-		# Modify/alter species rates here
-		rC2H2 = species_rates[0]
-		rCO = species_rates[1]
-		rH = species_rates[2]
-		rH2 = species_rates[3]
-		rH2O = species_rates[4]
-		rO2 = species_rates[5]
-		rOH  = species_rates[6]
-		
-		# Assign to soot consumption rate vector
-		wdot_soot[self.gas.species_index('C2H2')] += rC2H2
-		wdot_soot[self.gas.species_index('CO')] += rCO
-		wdot_soot[self.gas.species_index('H')] += rH
-		wdot_soot[self.gas.species_index('H2')] += rH2
-		wdot_soot[self.gas.species_index('H2O')] += rH2O
-		wdot_soot[self.gas.species_index('O2')] += rO2
-		wdot_soot[self.gas.species_index('OH')] += rOH
-		
-		
-		wdot_soot[:] = 0
-		# Total Gas Consumption Rate
-		mdot_eat = np.dot(wdot_soot,MW)*self.vol
-		
-		# Heat Terms
-		Q_h = 1000
-		
-		Q_h = 0
-		d_s = self.soot_properties(self.M)[0]
-		Ap = np.pi*d_s**2
-		Q_source = Q_h*Ap*(self.gas.T-self.Tp)
-		
-		mdot_out = self.mdot + (self.gas.P-self.inlet_gas.P)*1e-2 #self.mdot_compressible()#.308)
-
-		#wdot_soot[:] = 0
-		#mdot_eat = 0
-		
-		
-		#(self.mdot+mdot_eat)+(self.gas.P-self.P_outlet)
-		
-		#mdot_out = self.mdot_compressible()
-		#keyboard()
-		
-		if self.solve_energy:
-			dTdt = mdot_gas_in*(h_gas_in - np.dot(u_gas/MW,Y_gas_in))-self.gas.P/rho*mdot_out-np.dot(u_gas,wdot)*V #+ Q_source
-			
-			#dTdt += -np.dot(u_gas,wdot2)*V
-			
-			dTdt += -self.M[0]*Q_source*self.vol
-			
-			dTdt /= rho*V*cv
-				
-		else:
-			dTdt = 0
-		
-		
-		self.mdot_eat = mdot_eat
-		# Calculate Rates
-		dTpdt = (Q_source)#-0.9*5.67e-8*Ap*(self.Tp**4-300**4)+np.dot(u_gas,wdot_soot)*4/3*np.pi*(d_s/2)**3
-		m_soot = (self.M[1]*1.9944235e-26)/(self.M[0])
-		Cp_p = 840
-		dTpdt *= 1/(m_soot*Cp_p)
-		
-		#mdot_out = (self.mdot+mdot_eat)+(self.gas.P-self.P_outlet)
-		
-		#drhodt = ((self.mdot)-mdot_out+mdot_eat)/self.vol
-		
-
-		
-		#if drhodt<0:
-		#	keyboard()
-		
-		dmpdt = -mdot_eat - self.mp/self.tres
-		
-		
-		#if mdot_eat>0:
-		#	keyboard()
-		
-		#if self.mp<0:
-		#	if self.time>1e-3:
-		#		keyboard()
-		
-		dYdt = wdot*MW/(rho) + (Y_gas_in-Y_gas)*mdot_gas_in/(rho*V) + wdot_soot*MW/(rho) - Y_gas*mdot_eat/(rho*self.vol)
-		
-		# Rates output vector
-		rates = np.hstack([dTdt,drhodt,dYdt,dlogMdt,dlogPdt,dmpdt,dTpdt])
-		#self.state_rates = rates
-		
-		
-		return rates
-
-	
-		
-	def source_terms_coupled_Jac(self,t,y):
-		# Indices
-		iT = self.istate[0]
-		iD = self.istate[1]
-		iY = self.istate[2]
-		iM = self.istate[3]
-		iP = self.istate[4]
-		imp = self.istate[5]
-		iTp = self.istate[6]
-
-		
-		
-		# Check Solution
-		#if any(np.isnan(y)):
-		#	self.decrease_dt = True
-		#	return y*0
-		#elif y[iT]>3000:
-		#	self.decrease_dt = True
-		#	return y*0
-		#elif y[iT]<100:
-		#	self.decrease_dt = True
-		#	return y*0
-		#elif any(y[iM:imp]>300):
-		#	self.decrease_dt = True
-		#	return y*0
-		#elif any(np.diff(y[iM:iP])<0) or any(np.diff(y[iP:imp])<0):
-		#	self.decrease_dt = True
-		#	return y*0
-
-			
-		# Assign solution to gas object
-		self.gas.TDY = y[iT],y[iD],y[iY:iM]
-
-		
-		# Assign current solution to momic object attribute
-		M = np.exp(y[iM:iP])
-		P = np.exp(y[iP:imp])
-		mp = y[imp]
-		Tp = y[iTp]
-
-		# Gather info
-		mdot_gas_in = self.mdot
-		h_gas_in = self.inlet_gas.h
-		
-		u_gas = self.gas.partial_molar_int_energies
-		Y_gas_in = self.inlet_gas.Y
-		Y_gas = self.gas.Y
-		MW = self.gas.molecular_weights
-		V = self.vol
-		rho = self.gas.density
-		cv = self.gas.cv
-		Q_source = 0
-		wdot = self.gas.net_production_rates
-		
-		# Initialize soot production rate vector
-		wdot_soot = np.zeros(self.gas.n_species)
-		
-		# Calculate gas residence time in WSR
-		self.tres = self.gas.density*self.vol/mdot_gas_in
-				
-		# Calculate Moment Source Terms
-		dlogMdt, dlogPdt, __, species_rates = self.dlog_rates()
-		
-		# Output species rates are in mol/cm^3
-		# Convert to kmol/m^3 (Cantera units)
-		species_rates*=1e3 
-		
-		# Split species rate info
-		# Modify/alter species rates here
-		rC2H2 = species_rates[0]
-		rCO = species_rates[1]
-		rH = species_rates[2]
-		rH2 = species_rates[3]
-		rH2O = species_rates[4]
-		rO2 = species_rates[5]
-		rOH  = species_rates[6]
-		
-		# Assign to soot consumption rate vector
-		wdot_soot[self.gas.species_index('C2H2')] += rC2H2
-		wdot_soot[self.gas.species_index('CO')] += rCO
-		wdot_soot[self.gas.species_index('H')] += rH
-		wdot_soot[self.gas.species_index('H2')] += rH2
-		wdot_soot[self.gas.species_index('H2O')] += rH2O
-		wdot_soot[self.gas.species_index('O2')] += rO2
-		wdot_soot[self.gas.species_index('OH')] += rOH
-		
-		# Total Gas Consumption Rate
-		mdot_eat = np.dot(wdot_soot,MW)*self.vol
-		
-		# Heat Terms
-		Q_h = 1000
-		
-		d_s = self.soot_properties(self.M)[0]
-		Ap = np.pi*d_s**2
-		Q_source = Q_h*Ap*(self.gas.T-self.Tp)
-		
-		
-		mdot_out = self.mdot_compressible()#.308)
-
-		
-		if self.solve_energy:
-		
-			dTdt = mdot_gas_in*(h_gas_in - np.dot(u_gas/MW,Y_gas_in))-self.gas.P/rho*mdot_out-np.dot(u_gas,wdot)*V #+ Q_source
-			
-			#dTdt += -np.dot(u_gas,wdot2)*V
-			
-			dTdt += -self.M[0]*Q_source*self.vol
-			
-			dTdt /= rho*V*cv
-				
-		else:
-			dTdt = 0
-		
-		
-		# Calculate Rates
-		dTpdt = (Q_source)-0.9*5.67e-8*Ap*(self.Tp**4-300**4)+np.dot(u_gas,wdot_soot)*4/3*np.pi*(d_s/2)**3
-		m_soot = (self.M[1]*1.9944235e-26)/(self.M[0])
-		Cp_p = 840
-		dTpdt *= 1/(m_soot*Cp_p)
-		
-		drhodt = ((self.mdot)-mdot_out+mdot_eat)/self.vol
-		dmpdt = -mdot_eat - self.mp/self.tres
-		
-		#if self.mp<0:
-		#	if self.time>1e-3:
-		#		keyboard()
-		
-		dYdt = wdot*MW/(rho) + (Y_gas_in-Y_gas)*mdot_gas_in/(rho*V) + wdot_soot*MW/(rho) - Y_gas*mdot_eat/(rho*self.vol)
-		
-		# Rates output vector
-		rates = np.hstack([dTdt,drhodt,dYdt,dlogMdt,dlogPdt,dmpdt,dTpdt])
-		#self.state_rates = rates
-		
-		return rates
-		
 	def mdot_choked(self):#,Dt):
 		
 		Pt = self.gas.P
@@ -3638,58 +1156,7 @@ class WSR():
 		# Calculate and return compressible mass flow rate
 		# Formulation copied from NASA Glenn Compressible Mass Flow page
 		return At*Pt*np.sqrt(gamma/(R*Tt))*M*(1+(gamma-1)/2*M**2)**(-(gamma+1)/(2*(gamma-1)))
-
-
-	
-	def integrate(self,dt,tf):
-		
-		# Initial Conditions
-		y0 = np.append(np.log(self.M),np.log(self.P))
-
-		# ODE
-		solver = scipy.integrate.ode(self.scipy_ode_uncoupled)
-		solver.set_integrator('vode', method='bdf')#, with_jacobian=False)
-		solver.set_initial_value(y0, 0.0)
-		j = 0
-		M_store = y0
-		t_store = 0
-		dt_reset_indx = 100
-		dt_original = copy.deepcopy(dt)
-		
-		
-		#stepc = 10000
-		
-		count = 0
-
-		while solver.t < tf:
-			
-			Y0 = solver.y
-			t0 = solver.t
-			self.Y0 = Y0
-			self.t0 = t0
-			solver.integrate(solver.t+dt)
-			self.time = solver.t
-			count+= 1
-			print(count)
-		
-			if any(solver.y[0]>solver.y[1:]):
-				solver.set_initial_value(Y0,t0)
-				dt = dt*1e-1
-				count = -10
-				keyboard()
-				#print('Decreasing time step to:{}'.format(str(dt)))
-				
-			if count == 0:
-				dt = dt_original
-			
-
-		
-		self.M = np.exp(solver.y[0:np.size(self.M)])
-		
-		if self.aggregation:
-			self.P = np.exp(solver.y[np.size(self.M):])
 						
-			
 	
 	def mdot_out(self,gas):
 	
@@ -3702,36 +1169,7 @@ class WSR():
 		
 		mout = At*Pt*np.sqrt(gamma/(R*Tt))*Ma*(1+(gamma-1)/2*Ma**2)**(-(gamma+1)/(2*(gamma-1)))
 		
-		return mout
-	
-	
-	def gas_source_term(self,t,y):
-		T = y[0]
-		gas = self.gas
-		inlet = self.inlet_gas
-		
-
-		gas.TDY = y[0],y[1],y[2:]
-
-		
-		
-		rho = gas.density 
-		tres = rho*self.vol/self.mdot
-		self.tres = tres
-		wdot = gas.net_production_rates
-		
-		self.gas_S = wdot
-	
-		dTdt = -(np.dot(gas.partial_molar_enthalpies, wdot)/(rho*gas.cp)) + \
-		np.dot((inlet.partial_molar_enthalpies-gas.partial_molar_enthalpies)/inlet.molecular_weights,inlet.Y)/(tres*gas.cp)
-	
-		dYdt = (wdot)*gas.molecular_weights/(rho) + (inlet.Y-gas.Y)/(tres)
-	
-		mout = self.mdot_out(gas)
-		
-		drhodt = ((self.mdot)-mout)#+np.dot(self.momic_S,gas.molecular_weights)*self.vol)/self.vol
-
-		return np.hstack([dTdt,drhodt,dYdt])
+		return mout	
 	
 	def blowout(self,precision):
 		# Find minimum tres to prevent blowout
@@ -4031,286 +1469,6 @@ class WSR():
 		
 		return Vmin
 
-	def integrate_const_P_coupled(self,dt,t0,tf,convergence_criteria=None):
-			
-		Y = self.gas.Y
-		#PP = 7000000.000041853
-		# Initial Conditions
-		y0 = np.hstack([self.gas.T,Y,self.M,self.P,0,self.gas.T])
-		
-		# Indices
-		self.indx = {'T':0,'Y':np.arange(1,self.gas.n_species+1)}
-		self.indx.update({'M':np.arange(self.indx['Y'][-1]+1,self.indx['Y'][-1]+1+self.M_moments)})
-		self.indx.update({'P':np.arange(self.indx['M'][-1]+1,self.indx['M'][-1]+1+self.P_moments)})
-		self.indx.update({'mp':self.indx['M'][-1]+self.P_moments+1})
-		self.indx.update({'Tp':self.indx['mp']+1})
-		self.indx.update({'t':self.indx['Tp']+1})
-
-		
-		# Source Term ODE
-		sol_name = self.source_terms_const_P#_pfr
-		
-			
-		## Set Up ODE
-		# Defining source term function and numerical Jacobian function. scipy.integrate.ode has an
-		# automatic finite-difference jacobian option but it seems to be doing crazy things which 
-		# I cant figure out why. 
-		
-		solver = scipy.integrate.ode(sol_name)#,jac=self.jacobian_coupled)		
-		solver.set_integrator('lsoda',method='bdf', with_jacobian=True)
-		#solver.set_integrator('bdf')#, with_jacobian=True)
-		## 
-		# Set initial Conditions
-		solver.set_initial_value(y0, t0)
-		# Original input dt
-		dt_original = copy.deepcopy(dt)
-		
-		# Total number of time points to save data
-		n_pts = int(np.ceil(tf/dt))*2
-		# Preallocate Solution Array
-		self.Sol = np.zeros([n_pts,np.size(y0)+1])
-
-		# Initialize time and counters
-		i = 0
-		count = 0
-		self.time = 0
-		self.agg_flag = 1
-		self.first_call = True
-
-		while solver.t < tf:
-		
-			# Save Previous Solution
-			Y0 = solver.y
-			t0 = solver.t
-			# Integrate in time
-					
-			solver.integrate(solver.t+dt)
-
-			
-			
-			
-			#if self.flag:
-			#	solver = scipy.integrate.ode(sol_name)
-			#	solver.set_integrator('lsoda',method='bdf', with_jacobian=True)
-			#	solver.set_initial_value(Y0, t0)
-			#	keyboard()
-			#	self.flag = False
-			
-			# Get Solution at current time step
-			self.time = solver.t
-			#self.gas.TDY = solver.y[self.indx['T']],solver.y[self.indx['D']],solver.y[self.indx['Y']]
-			try:
-				self.gas.TPY = solver.y[self.indx['T']],self.gas.P,solver.y[self.indx['Y']]
-			except:
-				keyboard()
-			
-			#if count == 500:
-			#	solver.set_initial_value(solver.y, solver.t)
-			#	count = 0
-			
-			#if self.flag:
-			#	solver.set_initial_value(Y0, t0)
-			#	self.flag = False
-			#	keyboard()
-			
-			self.M = solver.y[self.indx['M']]
-			self.P = solver.y[self.indx['P']]
-			
-			
-			self.state = np.hstack([self.gas.T,self.gas.Y,\
-									self.M,self.P,\
-									solver.y[self.indx['mp']],\
-									solver.y[self.indx['Tp']],\
-									self.time])
-			# Update counter
-			count +=1
-			
-
-			fv = self.soot_properties(self.M)[1]
-			N = self.M[0]
-			d2 = ((fv/N)*3/4/np.pi)**(1/3)*2*1e7
-			
-			if d2>20 and self.first_call:# and False:
-				if self.agg_flag == 1:
-					self.P[:] = self.M[0]
-					y0 = np.hstack([self.gas.T,Y,self.M,self.P,0,self.gas.T])
-					t0 = solver.t
-					#y0 = solver.y
-					solver = scipy.integrate.ode(sol_name)
-					solver.set_integrator('lsoda',method='bdf', with_jacobian=True)
-					solver.set_initial_value(y0, t0)
-					
-				self.first_call = False
-				self.agg_flag = 2
-			#else:
-				#if self.agg_flag == 2:
-				
-				#self.agg_flag = 1
-			
-				
-			# Check Solution and reduce time step (for n time steps) 
-			# if any criteria is met
-			if any(np.isnan(solver.y)) or self.flag:
-				print('y is nan')
-				solver.set_initial_value(Y0, t0)
-				dt*=.1
-				print('Decreasing time step to:{}'.format(str(dt)))
-				count=-1*dt_original/dt
-				#self.flag = False
-				#keyboard()
-				
-			elif any(solver.y[self.indx['Y']]>1) or self.flag:
-				print('yi>1')
-				solver.set_initial_value(Y0, t0)
-				dt*=.1
-				print('Decreasing time step to:{}'.format(str(dt)))
-				count=-1*dt_original/dt
-				#self.flag = False
-				#keyboard()
-			
-			# Return time step to original dt after integrating for 10 decreased
-			# time steps
-			if count==0:
-				dt = dt_original
-				print('Reseting time step back to original stepsize')
-			
-			# Save Solution
-			if count>0:
-				self.Sol[i,:] = self.state
-				i+=1
-				
-			# Check if Convergence Criteria Specified
-			if convergence_criteria:
-				if all(np.abs(sol_name(solver.t,solver.y))<convergence_criteria):
-					print('Convergence Criteria Met')
-					self.Sol = self.Sol[~(self.Sol==0).all(axis=1)]
-					print('Solution Trimmed')
-					return
-		
-		# Return nonzero Solution Array
-		self.Sol = self.Sol[~(self.Sol==0).all(axis=1)]
-
-	def SS_droplet_WSR_incomplete(self,vol,U=0):
-		# Solve for SS WSR properties with droplet vaporization
-		# Solve by adding droplet source term, then integrating 
-		# WSR equations to SS, then updating source term until
-		# convergence. If droplet source term is added to 
-
-		# If input U is not zero, add U
-		if U !=0:
-			self.U_flow = U
-
-		if self.solve_droplet == False:
-			print('Droplet Calculation is turned off')
-			print('Quitting SS_droplet_WSR')
-			return
-
-		# Define inlet gas
-		inlet_gas = ct.Solution(self.reaction_mechanism)
-		inlet_gas.TPY = self.inlet_gas.T, self.inlet_gas.P, self.inlet_gas.Y
-
-		# Calculate Droplet Paramters
-		# ** FUTURE DEVELOPMENT **
-		# ** Can use this same function to solve for multiple droplet system
-		# ** Just add multiple droplet classes for each droplet parameter
-		# ** Then calculate all droplet vaporization masses and then 
-		# ** new averaged gas properties
-
-		[m_droplet,Df] = self.droplet.ct_gas(self.gas,self.tres,U=self.U_flow)
-
-		Y_gas = self.inlet_gas.Y
-		Y_liq = self.droplet.gas.Y
-
-		vaporized_mdot = m_droplet*self.droplet.N_drops
-
-		Y_mix = (Y_gas*self.inlet_gas_mdot + Y_liq*vaporized_mdot)/\
-			(self.inlet_gas_mdot+vaporized_mdot)
-
-		inlet_gas.TPY = self.inlet_gas.T, self.outlet_gas.P, Y_mix
-
-		mdot = self.inlet_gas_mdot + vaporized_mdot
-
-		keyboard()
-
-	def integrate_WSR_droplet(self,dt,tf):
-		# Solve WSR with droplet calculation
-
-		# Approach to solving WSR with droplet calculation, otherwise
-		# there is no convergence with the other method:
-		# Solve steady WSR with constant droplet source term
-		# Update droplet source term with constant properties
-		# Repeat until convergence
-		# Solve just gas source terms with no soot
-		
-		if self.solve_droplet == False or self.droplet.D0<=0:
-			print('Droplet Calculation is turned off or droplet D0=0')
-			print('Quitting SS_droplet_WSR')
-			return
-
-		# Use constant source in each dt step, turn off
-		# soot coupling
-		constant_source_flag = np.copy(self.constant_source)
-		soot_source_flag = np.copy(self.solve_soot)
-		coupled_source_flag = np.copy(self.solve_coupled)
-
-		#coupled_source_flag = np.copy(self.solve_coupled)
-		#soot_source_flag = np.copy(self.solve_soot)
-		#self.solve_coupled = False
-		
-		y0 = np.hstack([self.gas.T,self.gas.density,self.gas.Y])
-		self.indx = {'T':0,'D':1,'Y':np.arange(2,self.gas.n_species+2)}
-
-		sol_name = self.WSR_gas_source
-		print('CLEAN UP integrate_WSR_droplet!!!')
-
-		#keyboard()
-		
-		self.solve_soot = False
-
-		#self.constant_source_flag = True
-		self.scipy_solver(sol_name,y0,dt,tf,1e-3)
-
-		self.solve_soot = soot_source_flag
-
-		if self.solve_soot:
-			y0 = np.hstack([np.log(self.M),np.log(self.P),0,self.gas.T])
-			sol_name = self.WSR_soot_decoupled_source
-			self.indx = {'M':np.arange(0,self.M_moments)}
-			self.indx.update({'P':np.arange(self.indx['M'][-1]+1,self.indx['M'][-1]+1+self.P_moments)})
-			self.indx.update({'mp':self.indx['M'][-1]+self.P_moments+1})
-			self.indx.update({'Tp':self.indx['mp']+1})
-			self.scipy_solver(sol_name,y0,dt,tf,1e-3)
-
-		#keyboard()
-		
-		#self.solve_soot = False
-		#self.integrate_WSR(dt,tf,1e-3,ct_WSR_IC=True)		
-		#keyboard()
-		#state0 = np.copy(self.state)
-		
-		# iteration counter
-		#iter = 0
-
-		# Run droplet calculation to SS with constant droplet source
-		#while True:
-			# Update iteration counter
-		#	iter+=1
-		#	self.integrate_WSR(dt,tf,1e-1,ct_WSR_IC=False)
-			
-		#	if all(np.abs(self.state-state0)<1e-2):
-		#		break
-		#	elif iter<100:
-		#		iter+=1
-		#		state0 = np.copy(self.state)				
-		#	else:
-		#		keyboard()
-
-		# Turn off constant source
-		self.constant_source = False
-		self.solve_coupled = coupled_source_flag
-		self.solve_soot = soot_source_flag
-	
-
 	def initialize(self):
 
 		# Update Control Flags
@@ -4325,10 +1483,8 @@ class WSR():
 		# Check for Errors
 		self.error_check()
 
-
-
 	def solve(self,dt,tf,convergence_criteria=1e-5,ct_WSR_IC=True):
-
+		
 		# Initialize Model
 		self.initialize()
 
@@ -4347,8 +1503,6 @@ class WSR():
 			self.solve_droplet = True
 		else:
 			self.solve_droplet = False
-
-
 
 	def error_check(self):
 		# Check for Errors
@@ -4380,6 +1534,7 @@ class WSR():
 		# Main Function controlling integration of WSR equations
 		# Integrate WSR equations as coupled or decoupled
 		# Run a Cantera WSR to SS before starting the calculation
+		#keyboard()
 
 		# Initialize Arrays
 		self.mdot_vap = 0
@@ -4424,7 +1579,7 @@ class WSR():
 		self.indx = {'T':0,'D':1,'Y':np.arange(2,self.gas.n_species+2)}
 
 		if self.solve_coupled:
-			sol_name = self.WSR_soot_coupled_source
+			sol_name = self.rates_soot_coupled
 			self.indx.update({'M':np.arange(self.indx['Y'][-1]+1,self.indx['Y'][-1]+1+self.M_Moments)})
 			self.indx.update({'P':np.arange(self.indx['M'][-1]+1,self.indx['M'][-1]+1+self.P_Moments-1)})
 			self.indx.update({'mp':self.indx['M'][-1]+self.P_Moments})
@@ -4432,7 +1587,7 @@ class WSR():
 		else:
 			# If Uncoupled, first solve WSR for gas propeerties
 			# then solve for MOMIC rates
-			sol_name = self.WSR_gas_source
+			sol_name = self.rates_gas
 
 			# Save Original solve_soot flag and turn off
 			# soot calculation for decoupled case
@@ -4442,7 +1597,7 @@ class WSR():
 			self.solve_soot = solve_soot
 			
 			if self.solve_soot:
-				sol_name = self.WSR_soot_decoupled_source
+				sol_name = self.rates_soot_decoupled
 				y0 = []
 				self.indx = {'M':np.arange(0,self.M_Moments)}
 				self.indx.update({'P':np.arange(self.indx['M'][-1]+1,self.indx['M'][-1]+1+self.P_Moments-1)})
@@ -4514,15 +1669,20 @@ class WSR():
 			# If Soot conditions changed then reinitialize solver
 			# it's 3:47 am and my brain shut down so I'm doing this dumb way to reinitialze solver
 			# But when you wake up, read through scipy documentation to see how to reinitialize
-			if False:#self.MOMIC.condition_switch_flag:
+			if self.MOMIC.condition_switch_flag:
 				solver = scipy.integrate.ode(sol_name)
 				solver.set_integrator('vode',method='bdf', with_jacobian=True)
 				solver.set_initial_value(Y0, t0)
 
 			#keyboard()
 			# Integrate in time	
+
+			if solver.t>2*dt:
+				keyboard()
 			
 			solver.integrate(solver.t+dt)
+			keyboard()
+			
 			
 			if solver.t>3*dt:
 				keyboard()
@@ -4530,6 +1690,7 @@ class WSR():
 
 			solver_iter = 0
 			
+
 			# Sometimes solver can't advance full time step
 			# so keep integrating or pause and give terminal
 			# access if progress is too slow
@@ -4541,8 +1702,8 @@ class WSR():
 					keyboard()
 			
 			# Rates at current time step
-			#rates[:] = sol_name(solver.t,solver.y)
-			rates[:] = solver.y
+			rates[:] = solver.y#sol_name(solver.t,solver.y)
+			
 			# Get Solution at current time step
 			self.time = solver.t
 			self.rates = rates			
@@ -4612,365 +1773,8 @@ class WSR():
 
 		# Return nonzero Solution Array
 		self.Sol = self.Sol[~(self.Sol==0).all(axis=1)]
-		
-	def integrate_WSR55(self,dt,tf,convergence_criteria=None,ct_WSR_IC=False):
-		# Main Function controlling integration of WSR equations
-		# Integrate WSR equations as coupled or decoupled
-		
-		# Run a Cantera WSR to SS before starting the calculation
-		if ct_WSR_IC:
-			self.gas.equilibrate('UV')
-			self.WSR(self.vol,self.mdot_gas)
-		
-		self.TPY = self.gas.TPY
-		keyboard()
-		# Check IC 
-		if self.gas.T<500:
-			print('IC for Gas Temperature too low')
-			keyboard()
-		
-		# Create IC and define corresponding indices for data
-		y0 = np.hstack([self.gas.T,self.gas.density,self.gas.Y])
-		self.indx = {'T':0,'D':1,'Y':np.arange(2,self.gas.n_species+2)}
-		
-		# If solving for soot then add extra Eq
-		if self.solve_soot:
-			y0 = np.hstack([y0,np.log(self.M),np.log(self.P),0,self.gas.T])
-			self.indx.update({'M':np.arange(self.indx['Y'][-1]+1,self.indx['Y'][-1]+1+self.M_moments)})
-			self.indx.update({'P':np.arange(self.indx['M'][-1]+1,self.indx['M'][-1]+1+self.P_moments)})
-			self.indx.update({'mp':self.indx['M'][-1]+self.P_moments+1})
-			self.indx.update({'Tp':self.indx['mp']+1})
-		
-		# Add index for storing time points
-		self.indx.update({'t':self.indx['Tp']+1})
-		
-		if self.solve_coupled:
-			sol_name = self.WSR_coupled_source
-		else:
-			sol_name = self.wsr_soot_decoupled_source
-		
-		## Set Up ODE
-		# Defining source term function and numerical Jacobian function
-		solver = scipy.integrate.ode(sol_name)
-		solver.set_integrator('lsoda',method='bdf', with_jacobian=True)
-		
-		# Set initial Conditions
-		solver.set_initial_value(y0, 0.0)
-		
-		# Total number of time points to save data
-		n_pts = int(np.ceil(tf/dt))
-		
-		# Preallocate Solution Array and assign IC
-		self.Sol = np.zeros([n_pts+1,np.size(y0)+1])
-
-		self.Sol[0,:] = np.append(solver.y,0)
-		
-		# Initialize some variables
-		rates = np.zeros(np.size(solver.y))
-		Y0 = np.zeros(np.size(solver.y))
-		self.time = 0
-		count = 1
-		i = 0
-		
-		while solver.t < tf:
-			
-			# Save Previous Solution
-			# This is copied over from old code that was unstable and required reinitailizing
-			# decreasing time step if diverge occurs, or if time step is too large. I don't
-			# think I need it anymore but saving in case I do
-			
-			Y0[:] = solver.y
-			#t0 = solver.t
-			
-			
-			# Integrate in time	
-			solver.integrate(solver.t+dt)
-		
-			# Rates at current time step
-			rates[:] = sol_name(solver.t,solver.y)
-			
-			# Get Solution at current time step
-			self.time = solver.t
-			self.rates = rates			
-			self.state = np.hstack([solver.y,\
-									self.time])
-				
-			# Check Solution and reduce time step (for n time steps) 
-			# if any criteria is met
-			if any(np.isnan(solver.y)):
-				print('y is nan')
-				#solver.set_initial_value(Y0, t0)
-				#dt*=.1
-				#print('Decreasing time step to:{}'.format(str(dt)))
-				#count=-1*dt_original/dt
-				keyboard()
-				
-			elif any(solver.y[self.indx['Y']]>1):
-				#print('yi>1')
-				#solver.set_initial_value(Y0, t0)
-				#dt*=.1
-				#print('Decreasing time step to:{}'.format(str(dt)))
-				#count=-1*dt_original/dt
-				keyboard()
-			
-			# Return time step to original dt after integrating for 10 decreased
-			# time steps
-			if count==0:
-				dt = dt_original
-				print('Reseting time step back to original stepsize')
-			
-			# Save Solution
-			if count>0:
-				self.Sol[i,:] = self.state
-				i+=1
-				
-			# Check if Convergence Criteria Specified
-			if convergence_criteria:
-				if all(np.abs(rates)<convergence_criteria):
-					print('Convergence Criteria Met')
-					# Return nonzero Solution Array
-					self.Sol = self.Sol[~(self.Sol==0).all(axis=1)]
-					print('Solution Trimmed')
-
-					return
-			
-		# Return nonzero Solution Array
-		self.Sol = self.Sol[~(self.Sol==0).all(axis=1)]
-	
-	
-	def integrate_WSR_gas(self,dt,tf,convergence_criteria=None,ct_WSR_IC=False):
-		# Integrate WSR gas equations, purely gas calculation - NO SOOT
-		
-		# Run a Cantera WSR to SS before starting the calculation
-		if ct_WSR_IC:
-			self.gas.equilibrate('UV')
-			self.WSR(self.vol,self.mdot_gas)
-		
-		# Check IC 
-		if self.gas.T<500:
-			print('IC for Gas Temperature too low')
-			keyboard()
-		
-		# Create IC and define corresponding indices for data
-		y0 = np.hstack([self.gas.T,self.gas.density,self.gas.Y])
-		self.indx = {'T':0,'D':1,'Y':np.arange(2,self.gas.n_species+2)}
-			
-		# Add index for storing time points
-		self.indx.update({'t':self.indx['Y']+1})
-		
-		sol_name = self.wsr_gas_source
-		
-		
-		## Set Up ODE
-		# Defining source term function and numerical Jacobian function
-		solver = scipy.integrate.ode(sol_name)
-		solver.set_integrator('lsoda',method='bdf', with_jacobian=True)
-		
-		# Set initial Conditions
-		solver.set_initial_value(y0, 0.0)
-		
-		# Total number of time points to save data
-		n_pts = int(np.ceil(tf/dt))
-		
-		# Preallocate Solution Array and assign IC
-		self.Sol = np.zeros([n_pts+1,np.size(y0)+1])
-
-		self.Sol[0,:] = np.append(solver.y,0)
-		
-		# Initialize some variables
-		self.rates = np.zeros(np.size(solver.y))
-		Y0 = np.zeros(np.size(solver.y))
-		self.time = 0
-		count = 1
-		i = 0
-		
-		while solver.t < tf:
-			
-			# Save Previous Solution
-			# This is copied over from old code that was unstable and required reinitailizing
-			# decreasing time step if diverge occurs, or if time step is too large. I don't
-			# think I need it anymore but saving in case I do
-			
-			Y0[:] = solver.y
-			#t0 = solver.t
-			
-			
-			# Integrate in time	
-			solver.integrate(solver.t+dt)
-		
-			
-			# Get Solution at current time step
-			self.time = solver.t
-			self.rates[:] = sol_name(solver.t,solver.y)			
-			self.state = np.hstack([solver.y,\
-									self.time])
-				
-			# Check Solution and reduce time step (for n time steps) 
-			# if any criteria is met
-			if any(np.isnan(solver.y)):
-				print('y is nan')
-				#solver.set_initial_value(Y0, t0)
-				#dt*=.1
-				#print('Decreasing time step to:{}'.format(str(dt)))
-				#count=-1*dt_original/dt
-				keyboard()
-				
-			elif any(solver.y[self.indx['Y']]>1):
-				#print('yi>1')
-				#solver.set_initial_value(Y0, t0)
-				#dt*=.1
-				#print('Decreasing time step to:{}'.format(str(dt)))
-				#count=-1*dt_original/dt
-				keyboard()
-			
-			# Return time step to original dt after integrating for 10 decreased
-			# time steps
-			if count==0:
-				dt = dt_original
-				print('Reseting time step back to original stepsize')
-			
-			# Save Solution
-			if count>0:
-				self.Sol[i,:] = self.state
-				i+=1
-				
-			# Check if Convergence Criteria Specified
-			if convergence_criteria:
-				if all(np.abs(rates)<convergence_criteria):
-					print('Convergence Criteria Met')
-					# Return nonzero Solution Array
-					self.Sol = self.Sol[~(self.Sol==0).all(axis=1)]
-					print('Solution Trimmed')
-
-					return
-			
-		# Return nonzero Solution Array
-		self.Sol = self.Sol[~(self.Sol==0).all(axis=1)]
-			
-	def integrate_coupled(self,dt,tf,convergence_criteria=None):
-			
-		Y = self.gas.Y
-			
-		# Initial Conditions
-		
-		if self.solve_soot:
-			y0 = np.hstack([self.gas.T,self.gas.density,Y,np.log(self.M),np.log(self.P),0,self.gas.T])
-		
-			# Indices
-			self.indx = {'T':0,'D':1,'Y':np.arange(2,self.gas.n_species+2)}
-			self.indx.update({'M':np.arange(self.indx['Y'][-1]+1,self.indx['Y'][-1]+1+self.M_moments)})
-			self.indx.update({'P':np.arange(self.indx['M'][-1]+1,self.indx['M'][-1]+1+self.P_moments)})
-			self.indx.update({'mp':self.indx['M'][-1]+self.P_moments+1})
-			self.indx.update({'Tp':self.indx['mp']+1})
-			self.indx.update({'t':self.indx['Tp']+1})
-
-		else: 
-			y0 = np.hstack([self.gas.T,self.gas.density,Y])
-			# Indices
-			self.indx = {'T':0,'D':1,'Y':np.arange(2,self.gas.n_species+2)}
-			self.indx.update({'t':self.indx['Y']+1})
-
-		# Source Term ODE
-		sol_name = self.source_terms_coupled#_pfr
-		
-		
-		#sol_name = self.source_terms_coupled_closed
-		
-			
-		## Set Up ODE
-		# Defining source term function and numerical Jacobian function. scipy.integrate.ode has an
-		# automatic finite-difference jacobian option but it seems to be doing crazy things which 
-		# I cant figure out why. 
-		
-		solver = scipy.integrate.ode(sol_name)#,jac=self.jacobian_coupled)		
-		solver.set_integrator('lsoda',method='bdf', with_jacobian=True)
-		
-		## 
-		# Set initial Conditions
-		solver.set_initial_value(y0, 0.0)
-		# Original input dt
-		dt_original = copy.deepcopy(dt)
-		
-		# Total number of time points to save data
-		n_pts = int(np.ceil(tf/dt))*2
-		# Preallocate Solution Array
-		self.Sol = np.zeros([n_pts+1,np.size(y0)+1])
-
-		# Initialize time and counters
-		i = 0
-		count = 0
-		self.time = 0
-
-		while solver.t < tf:
-		
-			# Save Previous Solution
-			Y0 = solver.y
-			t0 = solver.t
-			# Integrate in time	
-			solver.integrate(solver.t+dt)
-			
-			rates = sol_name(solver.t,solver.y)
-			
-			#if rates[1]>0:
-			#	keyboard()
-
-			# Get Solution at current time step
-			self.time = solver.t
-			self.gas.TDY = solver.y[self.indx['T']],solver.y[self.indx['D']],solver.y[self.indx['Y']]
-			self.M[:] = np.exp(solver.y[self.indx['M']])
-			self.P[:] = np.exp(solver.y[self.indx['P']])
-			
-			self.state = np.hstack([self.gas.T,self.gas.density,self.gas.Y,\
-									np.log(self.M),np.log(self.P),\
-									solver.y[self.indx['mp']],\
-									solver.y[self.indx['Tp']],\
-									self.time])
-			# Update counter
-			count+= 1
-			
-			#keyboard()
-			
-			# Check Solution and reduce time step (for n time steps) 
-			# if any criteria is met
-			if any(np.isnan(solver.y)):
-				print('y is nan')
-				solver.set_initial_value(Y0, t0)
-				dt*=.1
-				print('Decreasing time step to:{}'.format(str(dt)))
-				count=-1*dt_original/dt
-				keyboard()
-				
-			elif any(solver.y[self.indx['Y']]>1):
-				print('yi>1')
-				solver.set_initial_value(Y0, t0)
-				dt*=.1
-				print('Decreasing time step to:{}'.format(str(dt)))
-				count=-1*dt_original/dt
-				keyboard()
-			
-			# Return time step to original dt after integrating for 10 decreased
-			# time steps
-			if count==0:
-				dt = dt_original
-				print('Reseting time step back to original stepsize')
-			
-			# Save Solution
-			if count>0:
-				self.Sol[i,:] = self.state
-				i+=1
-				
-			# Check if Convergence Criteria Specified
-			if convergence_criteria:
-				if all(np.abs(sol_name(solver.t,solver.y))<convergence_criteria):
-					print('Convergence Criteria Met')
-					self.Sol = self.Sol[~(self.Sol==0).all(axis=1)]
-					print('Solution Trimmed')
-					return
-			
-		# Return nonzero Solution Array
-		self.Sol = self.Sol[~(self.Sol==0).all(axis=1)]
-		
-	def WSR_soot_coupled_source(self,t,y):
+							
+	def rates_soot_coupled(self,t,y):
 		
 		# Check input for propblems
 		# Sometimes scipy ode goes crazy
@@ -5069,161 +1873,22 @@ class WSR():
 		
 		
 		return rates
-	
-	def WSR_soot_coupled_source2(self,t,y):
+		
+	def rates_soot_decoupled(self,t,y):
 		
 		# Check Solution
 		if any(np.isnan(y)):
 			pass
-			#keyboard()
-		#	self.decrease_dt = True
-
-		elif y[self.indx['D']]<0:
-		#	self.decrease_dt = True
-			#return y*0
-			#keyboard()
-			pass
-		elif y[self.indx['T']]<100:
-			#return y*0
-		#	self.decrease_dt = True
-			#y = self.state
-			#keyboard()
-			pass
-		elif y[self.indx['T']] > 5000:
-			#pass
-			#keyboard()
-			pass
-		elif y[self.indx['D']] > 1000:
-			#pass
-			#keyboard()
-			pass
 		else:
-			# Assign solution to gas object
-			self.gas.TDY = y[self.indx['T']],y[self.indx['D']],y[self.indx['Y']]	
-		
-		
-		# Assign current solution to momic object attribute
-		if self.solve_soot:
-			#keyboard()
-			if any(np.exp(y[self.indx['M']]) > 1e200):
-				pass
-			elif any(np.isnan(y[self.indx['M']])):
-				pass
-			elif any(np.diff(y[self.indx['M']]<0)):
-				pass
-			else:				
-				self.M[:] = np.exp(y[self.indx['M']])
-				self.P[:] = np.exp(y[self.indx['P']])
-				#keyboard()	
-				#self.MOMIC.set_Moments(self.M,self.P)	
-				self.mp = y[self.indx['mp']]
-				self.Tp = y[self.indx['Tp']]
-		
-
-		# Calculate Source Terms
-		self.sources()
-		
-		self.mdot_gas = self.inlet_gas_mdot + 0 + self.S_mass_t()
-		
-		self.mdot_gas+= self.S_mass
-
-		# Calculate gas residence time in WSR
-		self.tres = self.gas.density*self.vol/self.mdot_gas
-		
-
-		# Gather info		
-		u_gas = self.gas.partial_molar_int_energies
-		Y_gas_in = self.inlet_gas.Y
-		Y_gas = self.gas.Y
-		MW = self.gas.molecular_weights
-
-		rho = self.gas.density
-		cv = self.gas.cv
-		#Q_source = 0
-		wdot = self.gas.net_production_rates
-		
-
-		mdot_out =  self.mdot_out_func(mdot_set_pt=self.mdot_gas)#+self.S_mass 
-
-		if self.solve_energy:
-			dTdt = self.inlet_gas_mdot*(self.inlet_gas.h - np.dot(u_gas/MW,Y_gas_in))-self.gas.P/rho*mdot_out-np.dot(u_gas,wdot)*self.vol #+ Q_source					
-			dTdt += self.S_energy + self.S_energy_t() 		
-			dTdt /= rho*self.vol*cv				
-		else:
-			dTdt = 0
-		
-		
-		
-		if self.solve_soot:
-			# Calculate Rates
-			dTpdt = 0#(Q_source)#-0.9*5.67e-8*Ap*(self.Tp**4-300**4)+np.dot(u_gas,wdot_soot)*4/3*np.pi*(d_s/2)**3
-			m_soot = (self.M[1]*1.9944235e-26)/(self.M[0])
-			Cp_p = 840
-			dTpdt *= 1/(m_soot*Cp_p)
-			dmpdt = -self.mdot_eat - self.mp/self.tres
-			
-			dlogMdt,dlogPdt = self.soot_rates()
-
-			#dlogMdt = self.MOMIC.SM/self.M - 1/self.tres + self.inlet_M/(self.M*self.tres)
-
-			#if self.MOMIC.aggregate:
-			#	dlogPdt = self.MOMIC.SP/self.P - 1/self.tres + self.inlet_P/(self.P*self.tres)
-			#else:
-			#	dlogPdt = np.array(self.P)*0
-			
-			
-		drhodt = (self.inlet_gas_mdot-mdot_out+ self.S_mass +self.S_mass_t())
-
-		drhodt/= self.vol
-
-
-		self.drhodt = drhodt
-		self.dTdt = dTdt
-		self.mdot_out = mdot_out
-		
-		#if mdot_eat>0:
-		#	keyboard()
-		
-		#if self.mp<0:
-		#	if self.time>1e-3:
-		#		keyboard()
-		
-		#dYdt = wdot*MW/(rho) + (Y_gas_in-Y_gas)*self.inlet_gas_mdot/(rho*V) + wdot_soot*MW/(rho) - Y_gas*mdot_eat/(rho*self.vol)
-		dYdt = wdot*MW/(rho) + (Y_gas_in-Y_gas)*self.inlet_gas_mdot/(rho*self.vol)
-		
-		dYdt+= (self.S_species)/(self.gas.density*self.vol)
-		
-		dYdt+= (self.S_species_t())/(self.gas.density*self.vol)
-
-		# Rates output vector
-		if self.solve_soot:
-			rates = np.hstack([dTdt,drhodt,dYdt,dlogMdt,dlogPdt,dmpdt,dTpdt])
-		else:
-			rates = np.hstack([dTdt,drhodt,dYdt])#,dlogMdt,dlogPdt,dmpdt,dTpdt])
-		#self.state_rates = rates
-			
-		return rates
-		
-		
-	def WSR_soot_decoupled_source(self,t,y):
-		
-		# Check Solution
-		if any(np.isnan(y)):
-			keyboard()
-		#	self.decrease_dt = True
-		
-		# Assign current solution to momic object attribute
-
-		self.M[:] = np.exp(y[self.indx['M']])
-		self.P[:] = np.exp(y[self.indx['P']])		
-		self.mp = y[self.indx['mp']]
-		self.Tp = y[self.indx['Tp']]
-
+			# Assign current solution to momic object attribute
+			self.M[:] = np.exp(y[self.indx['M']])
+			self.P[:] = np.exp(y[self.indx['P']])		
+			self.mp = y[self.indx['mp']]
+			self.Tp = y[self.indx['Tp']]
 
 		# Run Soot calculation
 		self.sources()
-		#self.MOMIC.ct_rate()	
-		
+
 		# Calculate gas residence time in WSR
 		self.tres = self.gas.density*self.vol/self.mdot_gas
 			
@@ -5235,7 +1900,6 @@ class WSR():
 		dmpdt = -self.mdot_eat - self.mp/self.tres
 		
 		# Soot Rates
-
 		dlogMdt,dlogPdt = self.soot_rates()
 		
 		# Rates output vector
@@ -5243,29 +1907,24 @@ class WSR():
 		
 		return rates
 		
-	def WSR_gas_source(self,t,y):
+	def rates_gas(self,t,y):
 		
-		# Check Solution
+		# Check input for propblems
+		# Sometimes scipy ode goes crazy
+		# and enters stupid scalars which screws up
+		# Cantera/Moment functions - so ignore these inputs
 		if any(np.isnan(y)):
-			keyboard()
-		#	self.decrease_dt = True
+			pass
 		elif y[self.indx['D']]<0:
-		#	self.decrease_dt = True
-			#y = self.state
-			#keyboard()
 			pass
-
-		#elif y[iT]>3000:
-		#	self.decrease_dt = True
-		#	keyboard()
 		elif y[self.indx['T']]<100:
-		#	self.decrease_dt = True
-			#return y*0# self.state
-			#keyboard()
 			pass
-			
-		# Assign solution to gas object
+		elif y[self.indx['T']] > 5000:
+			pass
+		elif y[self.indx['D']] > 1000:
+			pass
 		else:
+			# Assign solution to gas object if input looks good
 			self.gas.TDY = y[self.indx['T']],y[self.indx['D']],y[self.indx['Y']]	
 
 		# Calculate total inlet mass flow rate (Gas + Vaporized Droplet)
@@ -5277,7 +1936,7 @@ class WSR():
 		# Calculate gas residence time in WSR
 		self.tres = self.gas.density*self.vol/self.mdot_gas
 
-		# Gather info		
+		# Gas Info	
 		u_gas = self.gas.partial_molar_int_energies
 		Y_gas_in = self.inlet_gas.Y
 		Y_gas = self.gas.Y
@@ -5290,8 +1949,7 @@ class WSR():
 		
 		mdot_out =  self.mdot_out_func(mdot_set_pt=self.mdot_gas) 
 
-		#mdot_out = self.inlet_gas_mdot + 1e-5*(self.gas.P-self.outlet_gas.P)
-
+		# Energy Eq
 		if self.solve_energy:
 			dTdt = self.inlet_gas_mdot*(self.inlet_gas.h - np.dot(u_gas/MW,Y_gas_in))-self.gas.P/rho*mdot_out-np.dot(u_gas,wdot)*self.vol #+ Q_source					
 			dTdt += self.S_energy +self.S_energy_t()
@@ -5299,23 +1957,16 @@ class WSR():
 		else:
 			dTdt = 0
 			
-			
+		# Continuity Eq
 		drhodt = (self.inlet_gas_mdot-mdot_out+ self.S_mass + self.S_mass_t())
-
-		#if self.outlet_BC == 'P':
-		#	drhodt = self.inlet_gas_mdot + mdot_out
-
-		#if drhodt>10:
-		#	keyboard()
-
 		drhodt/= self.vol
 
 		self.drhodt = drhodt
 		self.dTdt = dTdt
 		self.mdot_out = mdot_out
 		
-		dYdt = wdot*MW/(rho) + (Y_gas_in-Y_gas)*self.inlet_gas_mdot/(rho*self.vol)
-		
+		# Energy Equation
+		dYdt = wdot*MW/(rho) + (Y_gas_in-Y_gas)*self.inlet_gas_mdot/(rho*self.vol)	
 		dYdt+= (self.S_species + self.S_species_t())/(self.gas.density*self.vol)
 
 		# Rates output vector
@@ -5325,22 +1976,14 @@ class WSR():
 		
 	def soot_rates(self):	
 		
-		dlogM = self.MOMIC.SM/self.M - 1/self.tres + self.inlet_M/(self.M*self.tres)
-		
+		dlogM = self.MOMIC.SM/self.M - 1/self.tres + self.inlet_M/(self.M*self.tres)	
 		dlogP = self.P
 
 		if self.MOMIC.aggregation:
 			dlogP = self.MOMIC.SP/self.P - 1/self.tres + self.inlet_P/(self.P*self.tres)
 		else:
 			dlogP = np.array(self.P)*0
-
-		#if self.P:
-		#	if any(self.P!=0):
-		#		dlogP = self.MOMIC.SP/self.P - 1/self.tres + self.inlet_P/(self.P*self.tres)
-		#	else:
-		#		dlogP = self.MOMIC.SP
 		
-			
 		return [dlogM, dlogP]
 	
 	def sources(self):
@@ -5387,10 +2030,9 @@ class WSR():
 			
 			# Run Soot calculation
 			self.MOMIC.ct_rate()
-			#self.MOMIC.ct_rate_switcher()
-			print('Changed MOMIC.ct_rate to MOMIC.ct_rate_switcher in sources method')
 
 			self.mdot_eat = np.dot(self.MOMIC.wdot_soot,self.gas.molecular_weights)*self.vol			
+			
 			# If energy is coupled
 			if self.solve_coupled:
 				####### Mass #########
@@ -5439,22 +2081,6 @@ class WSR():
 		S_species = lambda :0
 		S_energy = lambda :0
 
-
-		# Calculate soot particle size and determine what coagulation/aggregation regime to use
-		
-		# ! MOMIC calculation needs to be run once to initialize everything in MOMIC module, 
-		# otherwise segfault! I should update momic f90 but I'm a lazy moron at the moment
-		# so I'm using default values for 1st calculation and then updating after 
-
-
-		#if self.MOMIC_initialized is False:
-		#	self.MOMIC_initialized = True
-		#else:
-		#	keyboard()
-
-
-
-
 		# Initial Some Stuff
 		# Droplet
 		S_mass_droplet = lambda: 0
@@ -5468,12 +2094,9 @@ class WSR():
 
 
 		if self.solve_soot:
-			self.MOMIC.update_regime_flags()
+			pass
+			#self.MOMIC.update_regime_flags()
 			
-			#if self.MOMIC.soot_properties(self.M)[0]> 16e-9:
-			#	keyboard()
-			print('UPDATING MOMIC REGIME')
-
 		
 		# Droplet Source Term
 		if self.solve_droplet:
@@ -6499,6 +3122,7 @@ class PFR:
 			self.surface_mechanism = self.main.surface_mechanism
 			self.deposit = self.main.deposit
 			self.WSR = self.main.WSR
+
 		else:
 			self.reaction_mechanism = reaction_mechanism
 			self.surface_mechanism = surface_mechanism
@@ -6520,54 +3144,21 @@ class PFR:
 		self.z = None
 		self.Sol = []
 		
-
-		
-		#self.Deposit = deposition(reaction_mechanism,surface_mechanism) 
 		self.count = 0	# Number of Times the Function is called 
 		
 		self.outlet_BC = []
 		self.outlet_gas = []
 		self.outlet_At = []
-		#self.constant_pressure = constant_pressure
-		
-		# Controller Flags:
-		#self.solve_aggregation = False
-		#self.solve_soot = True 
-		#self.solve_coupled = True
-		self.solve_droplet_pfr = False
-		
-		# Liquid Stuff (Defined by calling set_inlet_liquid)
-		#self.inlet_liquid = []
-		#self.inlet_liquid_z = []
-		#self.inlet_D0 = []
-		
+
 		# Scipy solver inputs 
 		self.wsr_dt = 1e-3
 		self.wsr_tf = 2
 		self.wsr_convergence_critera = 1e-3
-
 		self.Pc_guess = None
 
-		# Solve PFR as WSR or skip
-		#self.solve_PFR_as_WSR = True
-
-		# Check if main class is defined, add references if it is
-		#if main_class is not None:
-		#	self.main = main_class
-		#	self.solve_coupled = self.main.solve_coupled
-		#	self.constant_pressure = self.main.constant_pressure
-		#	self.solve_soot = self.main.solve_coupled
-		#	self.WSR = self.main.WSR
-		#else:
-			# Attach an existing WSR_object to PFR instance, or define a new WSR object
-		#	if WSR_object is not None:
-		#		self.WSR = WSR_object
-		#	else:
-		#		self.WSR = Moments(reaction_mechanism)
-	
-		#	self.solve_coupled = False
-		#	self.constant_pressure = False
-		#	self.solve_soot = False
+		# Control Flags 
+		self.solve_droplet_pfr = False
+		self.solve_soot = False
 
 	def pressure_guess(self,P_guess):
 		self.Pc_guess = P_guess
@@ -6601,41 +3192,13 @@ class PFR:
 		else:
 			self.Sol.append(self.WSR.gas.state,**Dict)
 
-	def save_sol2(self,i,Sol=None,**data):
-		# Store WSR properties in PFR using
-		# Cantera SolutionArray
-		
-		Dict = {'z':self.z[i],'U':self.WSR.U}
-		Dict.update(data)
-		if self.solve_soot:
-			Dict.update(self.WSR.MOMIC.moment_dict())
-			fv, rho_mix = self.soot_gas_properties()
-			additional_data = {'fv':fv}
-			Dict.update(additional_data)
-		if self.solve_droplet_pfr:
-			Dict.update({'Drop':self.WSR.droplet.Df})
-
-
-		if Sol is None:
-			Sol = ct.SolutionArray(self.WSR.gas,extra=Dict)
-			Sol.append(self.WSR.gas.state,**Dict)
-		else:
-			Sol.append(self.WSR.gas.state,**Dict)
-
-		return Sol
-
-
-
 	def update_control_flags(self):
 		# Update Control Flags in PFR/WSR
 		if self.main is not None:
 			self.solve_coupled = self.main.solve_coupled
-			#self.constant_pressure = self.main.constant_pressure
 			self.solve_soot = self.main.solve_soot
-			#self.WSR.update_control_flags(caller=self)
 		else:
 			self.WSR.solve_coupled = self.coupled
-			#self.WSR.constant_pressure = self.constant_pressure
 			self.WSR.solve_soot = self.solve_soot
 
 	def set_inlet_gas(self,T,P,Y,mdot,z=0):
@@ -6770,331 +3333,17 @@ class PFR:
 					keyboard()
 				else:
 					self.reactor_inlet_liq[loc] = [self.inlet_liq_properties]
-
-	def run_soot(self,P_dist=None):
-		# Solve Plug Flow Reactor as a series of 0-D WSR
-		# WSR coupled to soot calc
-		
-		# Create vector of inlets for each reactor
-		self.sort_inlets()
-		
-		# Get Initial Pressure Distribution
-		if P_dist:
-			pass
-		else:
-			self.WSR.def_inlet_gas(self.reactor_inlet[0][0].T, \
-			self.reactor_inlet[0][0].P, self.reactor_inlet[0][0].Y)
-			
-			self.WSR.def_outlet(self.outlet_BC,P=self.outlet_gas.P,At=self.At)
-			
-			# Run Uncoupled
-			self.WSR.WSR(self.V_total,self.reactor_inlet[0][1])
-			
-			self.WSR.inlet_Moments(self.inlet_M,P=self.inlet_P)
-			self.WSR.init_moments([1,2,3,4,5,6],self.inlet_P)
-			
-			# Now Run Coupled 
-			self.WSR.integrate_coupled(1e-5,1,convergence_criteria=1e-3)
-			P0 = self.WSR.gas.P
-			
-			# Save WSR result
-			self.Sol = Sol(self.WSR.gas,self.WSR.M,self.WSR.P,\
-				mdot_soot = self.WSR.mdot_eat, mdot_gas = self.WSR.mdot_out_func(),\
-				z=-999)
-
-		# Now find minimum WSR Volume and Length
-		Vmin = self.WSR.blowout_V(1e-10,Pc=P0)
-		
-		z0 = Vmin/self.Ac[0]
-		
-		if z0>self.z[0]:
-			self.z[0] = z0
-		else:
-			self.z = np.append(z0,self.z)
-			self.Ac = np.append(self.Ac[0],self.Ac)
-			self.sort_inlets()
-		
-		P_dist = P0*np.ones(np.size(self.z))
-	
-	def initialize_sooty(self,calculate_WSR0=True):
-		
-
-		self.WSR.def_inlet_gas(self.reactor_inlet[0][0].T, \
-			self.reactor_inlet[0][0].P, self.reactor_inlet[0][0].Y)
-		
-		self.WSR.def_outlet(self.outlet_BC,P=self.outlet_gas.P,At=self.At)
-		
-		# Run Uncoupled
-		mdot = self.reactor_inlet[0][1]
-		self.WSR.WSR(self.V_total,mdot)
-		
-		self.WSR.inlet_Moments(self.inlet_M,P=self.inlet_P)
-		
-		M0 = np.arange(0,np.size(self.inlet_M))+1
-		
-		if self.inlet_P is not None:
-			P0 = np.arange(0,np.size(self.inlet_P))
-		else:
-			P0 = []
-		
-		self.WSR.init_moments(M0,P0)
-			
-		# Now Run Coupled 
-		self.WSR.integrate_coupled(1e-5,1,convergence_criteria=1e-3)
-		
-		# Using this pressure for WSR blowout calculation below
-		P0 = self.WSR.gas.P	
-		
-		# Calculate soot fv, mixed Gas density and exit velocity
-		fv = lambda :self.WSR.soot_properties(self.WSR.M)[1]
-		rho_mix = lambda : 1800*fv()+self.WSR.gas.density*(1-fv())
-		Um = mdot/(rho_mix()*self.Ac[0])
-		
-		# Create Solution Object and save WSR result
-		self.Sol = Sol(self.WSR.gas,self.WSR.M,self.WSR.P,\
-			mdot_soot = -self.WSR.mdot_eat, mdot_gas = self.WSR.mdot_out_func(),\
-			z=-999,Um=Um,rho_mix=rho_mix(),fv=fv())
-				
-		# Now find minimum WSR Volume and Length
-		Vmin = self.WSR.blowout_V(1e-10,Pc=P0)
-		z0 = Vmin/self.Ac[0]
-		
-		if calculate_WSR0:
-			if z0>=self.z[0]:
-				self.z[0] = z0
-			else:
-				self.z = np.append(z0,self.z)
-				self.Ac = np.append(self.Ac[0],self.Ac)
-				self.sort_inlets()
-			
-		elif z0>self.z[0]:
-			raise ValueError('Initial WSR volume in PFR reactor chain results in blowout, increase the intial WSR volume')
-	
-	def initialize_pfr_decoupled(self,calculate_WSR0=True):
-		
-		
-		self.WSR.def_inlet_gas(self.reactor_inlet_gas[0][0].T, \
-			self.reactor_inlet_gas[0][0].P, self.reactor_inlet_gas[0][0].Y)
-		
-		self.WSR.def_outlet(self.outlet_BC,P=self.outlet_gas.P,At=self.At)
-		
-		# Run WSR
-		mdot = self.reactor_inlet[0][1]
-		
-		self.WSR.WSR(self.V_total,mdot)
-		
-		self.WSR.inlet_Moments(self.inlet_M,P=self.inlet_P)
-		
-		M0 = np.arange(0,np.size(self.inlet_M))+1
-		
-		if self.inlet_P is not None:
-			P0 = np.arange(0,np.size(self.inlet_P))
-		else:
-			P0 = []
-		
-		self.WSR.init_moments(M0,P0)
-		
-		# Integrate Moments
-		conv = self.WSR.integrate_to_SS(1000)
-		
-		if conv != 1:
-			keyboard()
-		
-		# Using this pressure for WSR blowout calculation below
-		P0 = self.WSR.gas.P	
-		
-		# Calculate soot fv, mixed Gas density and exit velocity
-		fv = lambda :self.WSR.soot_properties(self.WSR.M)[1]
-		rho_mix = lambda : self.WSR.gas.density
-		Um = mdot/(rho_mix()*self.Ac[0])
-		
-		# Create Solution Object and save WSR result
-		self.Sol = Sol(self.WSR.gas,self.WSR.M,self.WSR.P,\
-			mdot_gas = self.WSR.mdot_out_func(),\
-			z=-999,Um=Um,rho_mix=rho_mix(),fv=fv())
-				
-		# Now find minimum WSR Volume and Length
-		Vmin = self.WSR.blowout_V(1e-10,Pc=P0)
-		z0 = Vmin/self.Ac[0]
-		
-		if calculate_WSR0:
-			if z0>=self.z[0]:
-				self.z[0] = z0
-			else:
-				self.z = np.append(z0,self.z)
-				self.Ac = np.append(self.Ac[0],self.Ac)
-				self.sort_inlets()
-			
-		elif z0>self.z[0]:
-			raise ValueError('Initial WSR volume in PFR reactor chain results in blowout, increase the intial WSR volume')
 	
 	def initialize_pfr_model(self,calculate_WSR0=True):
 		# Initialize arrays used in PFR calculations/calculate WSR and setup PFR calculations 
 
-
-
+		# Update Control Flags
+		self.update_control_flags()
 		# Check for errors
-		self.error_check()
-
-		# Need to clean this updating up and make it easier
-		#  ||
-		# \||/
-		# Update control flags
-		self.update_control_flags()		
-		# Update MOMIC Flags
-		self.WSR.MOMIC.update_regime_flags(reset=True)
-
-
+		self.error_check()	
 		# Create vector of inlets for each reactor
-		self.sort_inlets()
-		
-		# Calculate WSR solution for same volume as PFR
-
-		# Use inlet conditions for 1st WSR reactor
-		self.WSR.set_inlet_gas(self.reactor_inlet_gas[0][0].T,	\
-			self.reactor_inlet_gas[0][0].P, 					\
-			self.reactor_inlet_gas[0][0].Y,						\
-			mdot = self.reactor_inlet_gas[0][1])
-
-		mdot = self.reactor_inlet_gas[0][1]
-
-		#if self.constant_pressure:
-		#	self.WSR.def_outlet('PC',P=self.outlet_gas.P)
-		#else:
-		#	self.WSR.def_outlet(self.outlet_BC,P=self.outlet_gas.P,At=self.At)
-		
-
-		if False:#self.solve_droplet:
-			self.WSR.def_inlet_liq(self.reactor_inlet_liquid[0][0][0],	\
-			self.reactor_inlet_liquid[0][0][1],						\
-			self.reactor_inlet_liquid[0][0][2],						\
-			self.reactor_inlet_liquid[0][0][3],						\
-			self.reactor_inlet_liquid[0][0][4],						\
-			self.reactor_inlet_liquid[0][0][5],						\
-			self.reactor_inlet_liquid[0][0][6],						\
-			self.reactor_inlet_liquid[0][0][7],						\
-			convection = self.reactor_inlet_liquid[0][0][8])		
-		
-		if False:#self.solve_soot:
-			self.WSR.set_inlet_Moments(self.inlet_M,P=self.inlet_P)
-			
-			M0 = np.exp(np.arange(0,np.size(self.inlet_M))+1)
-			if self.inlet_P is not None:
-				#P0 = np.arange(0,np.size(self.inlet_P)) + M0[0] + 1
-				P0 = np.ones(np.size(self.inlet_P))*M0[0]
-			else:
-				P0 = []
-			
-			self.WSR.MOMIC.set_moments(M0,P0)
-			
-		# Set WSR Volume
-		self.WSR.vol = self.vol
-		# Set WSR Ac
-		self.WSR.Ac = self.Ac[0]
-		
-		
-		# Integrate WSR
-		if False:#self.solve_PFR_as_WSR:
-			self.WSR.integrate_WSR(self.wsr_dt,self.wsr_tf,\
-				convergence_criteria = self.wsr_convergence_critera, \
-				ct_WSR_IC = True)
-		elif False:
-			print('Using Equilibrium Conditions instead of solving for big WSR')
-			print('Clean this up in initialize_PFR')
-			pass
-			mdot_gas = self.reactor_inlet_gas[0][1]
-			gas = ct.Solution(self.reaction_mechanism)
-			gas.TPY = self.reactor_inlet_gas[0][0].TPY
-
-			if self.inlet_liq is not None:
-				#keyboard()
-				gas2 = ct.Solution(self.reaction_mechanism)
-				gas2.TPY = self.inlet_liquid[0]
-				mdot_liq = self.inlet_liquid_properties[3]
-				self.WSR.droplet.Df = 999
-			
-			C = ct.Quantity(gas,mass=mdot_gas)
-			#B = ct.Quantity(gas2,mass=mdot_liq)
-			#C = A+B
-
-			mdot_soot = 0
-			
-			self.WSR.tres = 999
-
-
-
-			self.WSR.gas.TPY = C.T, self.outlet_gas.P,C.Y
-
-		#self.WSR.flaggy = True
-		#s1 = self.WSR.source_terms_coupled(.1,self.WSR.state)
-		#s2 = self.WSR.WSR_soot_coupled_source(.1,self.WSR.state)
-		#self.sources()
-		#A1 = self.source_terms_coupled(.1,y0)
-		#B1 = self.WSR_soot_coupled_source(.1,y0)
-
-
-		# Calculate soot fv, mixed Gas density and exit velocity
-		#fv, rho_mix = self.soot_gas_properties()
-		#Um = mdot/(rho_mix*self.Ac[0])
-		
-		#if self.solve_soot:
-		#	mdot_soot = -self.WSR.mdot_eat
-		#else:
-		#	mdot_soot = 0
-		
-
-		#M_dict = self.WSR.MOMIC.moment_dict()
-
-#		self.Sol = ct.SolutionArray(self.WSR.gas,extra = M_dict)
-
-#		self.Sol.append(self.WSR.gas.state,**M_dict)
-
-
-		if False:#self.solve_droplet:
-			# Store Solution
-			self.Sol= Sol(self.WSR.gas,self.WSR.M,self.WSR.P, \
-				Um=Um,mdot_gas = self.WSR.mdot_out_func(), mdot_soot=mdot_soot, \
-				rho_mix = rho_mix,fv = fv,z=-999,Droplet=self.WSR.droplet.Df,tres=self.WSR.tres)
-		elif False:
-			# Create Solution Object and store WSR result:
-			self.Sol = Sol(self.WSR.gas,self.WSR.M,self.WSR.P,\
-				mdot_soot = mdot_soot, mdot_gas = self.WSR.mdot_out_func(),\
-				z=-999,Um=Um,rho_mix=rho_mix,fv=fv,tres=self.WSR.tres)
-
-		if False:		
-			# Now find minimum WSR Volume and Length, use the WSR pressure for blowout calculation
-			Pc0 = self.WSR.gas.P
-			print('Calculating minimum volume of initial WSR to '+ \
-			'not blow out')
-
-			# Set to Constant Pressure
-			self.WSR.def_outlet('PC',P=Pc0)
-			if self.solve_droplet:
-				# Find minimum volume to prevent blowout with convergence of within 1%
-				Vmin = self.WSR.blowout_droplet(1e-1,Pc=Pc0)
-			else:
-				Vmin = self.WSR.blowout_V(1e-8,Pc=Pc0)
-			
-			z0 = Vmin/self.Ac[0]
-
-			if calculate_WSR0:
-				# Indx of z that are smaller than Vmin
-				less_than_Vmin = self.z<z0
-
-				# Delete smaller than Vmin (These are too small and will blowout)
-				self.z = self.z[~less_than_Vmin]
-				self.Ac = self.Ac[~less_than_Vmin]
-
-				# Now add z0 and Vmin to first z and Ac indx
-				self.z = np.append(z0,self.z)
-				self.Ac = np.append(self.Ac[0],self.Ac)
-
-				# Do some sorting magic again
-				self.sort_inlets()
-
-			elif z0>self.z[0]:
-				raise ValueError('Initial WSR volume in PFR reactor chain results in blowout, increase the intial WSR volume')	
-	
+		self.sort_inlets()	
+				
 
 	def soot_gas_properties(self):
 		
@@ -7124,7 +3373,6 @@ class PFR:
 		# Use WSR results for initial Pressure distribution in PFR
 		# We're iterating on pressure afterwards so this is just some starting pt
 		#P0_dist = self.WSR.gas.P*np.ones(np.size(self.z))
-
 		if self.outlet_BC == 'PC':
 			Pc = self.outlet_gas.P
 		elif self.Pc_guess is not None:
@@ -7141,13 +3389,13 @@ class PFR:
 			Pc = self.Sol.P[-1]
 			self.z = z_input
 			self.Ac = Ac_input
-
+		
+		keyboard()
 		# Initialize PFR
 		# Had some things in here that I didn't need, maybe don't
 		# even need this method?
-		keyboard()
 		self.initialize_pfr_model()
-		
+
 		# Solve PFR Model
 		Sol = self.solve_pfr_model(Pc,calculate_WSRmin=calculate_WSRmin)
 
@@ -7274,8 +3522,6 @@ class PFR:
 
 			# Set Initial Moments
 			self.WSR.MOMIC.set_moments(M0,P0)
-			# WTF is this?
-			self.WSR.MOMIC.update_regime_flags(reset=True)
 		
 		# Setup constant pressrue outlet to 1st WSR
 		if Use_PFR_BC:
@@ -7373,7 +3619,6 @@ class PFR:
 		
 		# Save the 1st WSR solution using Cantera SolutionArray Class
 		self.save_solution(0,mdot_gas=mdot_gas,mdot_liq=mdot_liq,mdot_soot=mdot_soot,new_Sol=True)
-		#Sol = self.save_sol2(0,mdot_gas=mdot_gas,mdot_liq=mdot_liq,mdot_soot=mdot_soot)
 		
 		# Run Reactor Chain
 		for i,_ in enumerate(self.z[1:],start=1):
@@ -7426,201 +3671,6 @@ class PFR:
 
 			# Save Solution
 			self.save_solution(i,mdot_gas=mdot_gas,mdot_liq=mdot_liq,mdot_soot=mdot_soot)
-			#Sol = self.save_sol2(0,mdot_gas=mdot_gas,mdot_liq=mdot_liq,mdot_soot=mdot_soot,Sol=Sol)
-		
-		# Saving directly to class in save_solution doesnt work, so doing this
-		# this seems to work
-		#return Sol
-
-	def run_pfr_no_soot(self,P0_dist,init_M = None,init_P = None):
-		# Solve Plug Flow Reactor as a series of 0-D WSR
-		# Decoupled from soot calculation
-		mdot = 0
-	
-		# Initial WSR in chain
-		self.WSR.def_inlet_gas(self.reactor_inlet[0][0].T,self.reactor_inlet[0][0].P,\
-		self.reactor_inlet[0][0].Y)
-		
-		self.WSR.inlet_Moments(self.inlet_M,self.inlet_P)
-		
-		if self.constant_pressure:
-			self.WSR.def_outlet('P',P=P0_dist[0])
-		else:
-			self.WSR.def_outlet('compressible',P=P0_dist[1],At=self.Ac[0])
-		
-		# Initial WSR volume
-		dV = self.z[0]*self.Ac[0]
-		
-		# Run non-sooty WSR 
-		self.WSR.WSR_P(dV,self.reactor_inlet[0][1],Pc=P0_dist[0])
-		mdot+=self.reactor_inlet[0][1]
-		
-		if init_M is not None:
-			M0 = init_M
-		else:
-			M0 = np.arange(0,np.size(self.inlet_M))+1
-		
-		if init_P is not None:
-			P0 = init_P
-		else:
-			if self.inlet_P is not None:
-				P0 = np.arange(0,np.size(self.inlet_P))+M0[0]+1
-			else:
-				P0 = []
-		
-		self.WSR.init_moments(M0,P0)
-		self.WSR.integrate_to_SS(1000)
-		
-		fv = lambda :self.WSR.soot_properties(self.WSR.M)[1]
-		rho_mix = lambda : self.WSR.gas.density
-		
-		# Calculate Variables
-		Um = mdot/(rho_mix()*self.Ac[0])
-		mdot_gas = self.WSR.mdot_out_func()
-		
-		keyboard()
-		# Store Variables
-		self.Sol.append(self.WSR.gas,self.WSR.M,self.WSR.P, \
-			Um=Um,mdot_gas = mdot_gas,  \
-			rho_mix = rho_mix(),fv = fv(),z=self.z[0])
-		
-		# Run Reactor Chain
-		for i,_ in enumerate(self.z[1:],start=1):
-			
-			# Calculate Volume of next WSR reactor
-			dV = (self.z[i]-self.z[i-1])*(self.Ac[i]+self.Ac[i-1])/2
-			
-			
-			# Define Outlet
-			if self.constant_pressure:
-				self.WSR.def_outlet('P',P=P0_dist[0])
-			else:
-				if i == np.size(self.z)-1:
-					self.WSR.def_outlet(self.outlet_BC,P=self.outlet_gas.P,At=self.At)
-				else:
-					self.WSR.def_outlet('compressible',P=P0_dist[i+1],At=self.Ac[i])
-			
-			# Define inlet for next gas:
-			if self.reactor_inlet[i]:
-				# Need to develop
-				# This is if there are other inlets(x) to PFR (like Fuel Film)
-				keyboard()
-				
-			else:
-				self.WSR.def_inlet_gas(self.WSR.gas.T,self.WSR.gas.P,self.WSR.gas.Y)
-				self.WSR.WSR(dV,mdot_gas)
-			
-			self.WSR.inlet_Moments(self.WSR.M,self.WSR.P)
-			conv = self.WSR.integrate_to_SS(1000)		
-			
-			if conv != 1:
-				keyboard()
-			
-			# Calculate Variables
-			Um = mdot/(rho_mix()*self.Ac[0])
-			mdot_gas = self.WSR.mdot_out_func()
-		
-			# Store Variables
-			self.Sol.append(self.WSR.gas,self.WSR.M,self.WSR.P, \
-				Um=Um,mdot_gas = mdot_gas, \
-				rho_mix = rho_mix(),fv = fv(),z=self.z[i])		
-		
-	
-	def run_pfr_soot(self,P0_dist,init_M = None,init_P=None):
-		# Solve Plug Flow Reactor as a series of 0-D WSR
-		# WSR coupled to soot calc
-		
-		#Initialize Variables
-		mdot = 0
-
-		# Initial WSR in chain
-		self.WSR.def_inlet_gas(self.reactor_inlet[0][0].T,self.reactor_inlet[0][0].P,\
-		self.reactor_inlet[0][0].Y)
-		
-		self.WSR.inlet_Moments(self.inlet_M,self.inlet_P)
-		
-		if self.constant_pressure:
-			self.WSR.def_outlet('P',P=P0_dist[0])
-		else:
-			self.WSR.def_outlet('compressible',P=P0_dist[1],At=self.Ac[0])
-		
-		# Initial WSR volume
-		dV = self.z[0]*self.Ac[0]
-		
-		# Run non-sooty WSR first
-		self.WSR.WSR_P(dV,self.reactor_inlet[0][1],Pc=P0_dist[0])
-		
-		mdot+=self.reactor_inlet[0][1]
-		
-		# Run Coupled
-		if init_M is not None:
-			M0 = init_M
-		else:
-			M0 = np.arange(0,np.size(self.inlet_M))+1
-		
-		if init_P is not None:
-			P0 = init_P
-		else:
-			if self.inlet_P is not None:
-				P0 = np.arange(0,np.size(self.inlet_P))+M0[0]+1
-			else:
-				P0 = []
-		
-		self.WSR.init_moments(M0,P0)
-		self.WSR.integrate_coupled(1e-5,1,convergence_criteria=1e-3)
-
-		fv = lambda :self.WSR.soot_properties(self.WSR.M)[1]
-		rho_mix = lambda : 1800*fv()+self.WSR.gas.density*(1-fv())
-
-		# Calculate Variables
-		Um = mdot/(rho_mix()*self.Ac[0])
-		mdot_gas = self.WSR.mdot_out_func()
-		mdot_soot = -self.WSR.mdot_eat
-		
-		# Store Variables
-		self.Sol.append(self.WSR.gas,self.WSR.M,self.WSR.P, \
-			Um=Um,mdot_gas = mdot_gas, mdot_soot=mdot_soot, \
-			rho_mix = rho_mix(),fv = fv(),z=self.z[0])
-		
-		# Run Reactor Chain
-		for i,_ in enumerate(self.z[1:],start=1):
-			
-			# Calculate Volume of next WSR reactor
-			dV = (self.z[i]-self.z[i-1])*(self.Ac[i]+self.Ac[i-1])/2
-			
-			
-			# Define Outlet
-			if self.constant_pressure:
-				self.WSR.def_outlet('P',P=P0_dist[0])
-			else:
-				if i == np.size(self.z)-1:
-					self.WSR.def_outlet(self.outlet_BC,P=self.outlet_gas.P,At=self.At)
-				else:
-					self.WSR.def_outlet('compressible',P=P0_dist[i+1],At=self.Ac[i])
-			
-			# Define inlet for next gas:
-			if self.reactor_inlet[i]:
-				# Need to develop
-				# This is if there are other inlets(x) to PFR (like Fuel Film)
-				keyboard()
-				
-			else:
-				self.WSR.def_inlet_gas(self.WSR.gas.T,self.WSR.gas.P,self.WSR.gas.Y)
-				self.WSR.WSR(dV,mdot_gas)
-			
-			self.WSR.inlet_Moments(self.WSR.M,self.WSR.P)
-			self.WSR.integrate_coupled(1e-5,1,convergence_criteria=1e-3)		
-			
-			# Calculate Variables
-			Um = mdot/(rho_mix()*self.Ac[0])
-			mdot_gas = self.WSR.mdot_out_func()
-			mdot_soot += -self.WSR.mdot_eat
-		
-			# Store Variables
-			self.Sol.append(self.WSR.gas,self.WSR.M,self.WSR.P, \
-				Um=Um,mdot_gas = mdot_gas, mdot_soot=mdot_soot, \
-				rho_mix = rho_mix(),fv = fv(),z=self.z[i])
-
 
 class deposition:
 	# Class for calculating deposition/soot growth rates
@@ -7998,12 +4048,7 @@ class Sol_OLD:
 			setattr(self,key,np.empty([allocate_size,1])*np.nan)
 			self.variables.append(key)
 			
-
-
-
 			#np.array(kwargs[key]))
-			
-
 
 		# Append Gas Object
 		self.gas_object = gas
