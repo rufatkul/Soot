@@ -1,0 +1,22 @@
+&PROPERTIES
+ doSOOT= .TRUE.
+ AGGREGATION = .TRUE.
+ M_MOMENTS=          6
+ P_MOMENTS=          4
+ /
+
+&IC
+M(1) = 0
+M(2) = 0
+M(3) = 0
+M(4) = 0
+M(5) = 0
+P(1) = 0
+P(2) = 0
+P(3) = 0
+/
+
+&COAG_REGIME
+FORCE_REGIME = .TRUE.
+REGIME = 1
+/
