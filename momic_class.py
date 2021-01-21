@@ -1677,16 +1677,7 @@ class WSR():
 			#keyboard()
 			# Integrate in time	
 
-			if solver.t>2*dt:
-				keyboard()
-			
 			solver.integrate(solver.t+dt)
-			keyboard()
-			
-			
-			if solver.t>3*dt:
-				keyboard()
-			
 
 			solver_iter = 0
 			
@@ -3390,7 +3381,6 @@ class PFR:
 			self.z = z_input
 			self.Ac = Ac_input
 		
-		keyboard()
 		# Initialize PFR
 		# Had some things in here that I didn't need, maybe don't
 		# even need this method?
