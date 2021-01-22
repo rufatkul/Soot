@@ -34,6 +34,7 @@ INTEGER, ALLOCATABLE :: binom(:,:)
 ! Reduced Moment Interpolants
 REAL(KIND=DBL), ALLOCATABLE ::  L_pos(:,:), L_neg(:,:)
 INTEGER :: mu_LO, mu_HI
+REAL(KIND=DBL), ALLOCATABLE :: mu(:)
 
 ! Data from Input File
 ! Input File Name
@@ -246,7 +247,7 @@ INTEGER, SAVE :: NumCalls = 1
 
 		! Initialize MOMIC
 		CALL INITIALIZE_MOMIC()
-		!ALLOCATE(mu(mu_LO:mu_HI))
+
 		
 	END SUBROUTINE INITIALIZE
 		
@@ -266,7 +267,7 @@ INTEGER, SAVE :: NumCalls = 1
 		REAL(KIND=DBL) :: rC2H2_nuc, rC2H2_surf
 		
         ! Local Variables
-        REAL(KIND=DBL), ALLOCATABLE :: mu(:)
+        !REAL(KIND=DBL), ALLOCATABLE :: mu(:)
         REAL(KIND=DBL), DIMENSION(SIZE(P_in)+1) :: P
 		!REAL(KIND=DBL), ALLOCATABLE, DIMENSION(:) :: P 
         INTEGER :: i                         
@@ -275,61 +276,20 @@ INTEGER, SAVE :: NumCalls = 1
 		INTEGER :: COAGULATION_REGIME  ! Free-Molecular/Transitional/Continuum Regime (Determined by Knudsen #)
 		
 		REAL(KIND=DBL), DIMENSION(SIZE(M)) :: f
-		REAL(KIND=DBL) :: a,b,rsq 
-		
+		REAL(KIND=DBL) :: a,b,rsq 	
         REAL(KIND=DBL), DIMENSION(SIZE(M)) :: W_C2H2, W_O2, W_OH
                  
-        ! Initialize Moments Module:
+        
+		! Initialize Moments Module:
         ! Calculate Binomial Coefficient
         ! Calculate Lagrange Interpolation Stencil
         ! Calculate Number of P and R moments
         ! Calculate lowest fraction and highest fraction moments
+		! Allocate Reduced Order moment array with appropriate size
         IF(.NOT. isInitialized) THEN
-            ! Read Moments Input
-            CALL INITIALIZE_MOMIC()
-		
-			! Check if correct initial conditions are being used
-			!IF(ALL(M==M_0)) THEN
-			!	CONTINUE
-			!ELSE
-			!	WRITE(*,*) 'PROBLEM READING INITIAL CONDITIONS, THE M Moment at initial call to CALCULATE_SOURCE &
-			!	is different from what is specified in input IC'
-			!	WRITE(*,*) 'M at initial Call: ', M
-			!	WRITE(*,*) 'M in IC file: ', M_0 
-			!	error_flag = .TRUE.
-            !END IF
-				
-            ! Check P moments if it's allocated
-            !IF (CALC_AGGREGATE) THEN
-			!    IF(ALL(P==P_0)) THEN 
-			!	    CONTINUE
-			 !   ELSE
-			!	    WRITE(*,*) 'PROBLEM READING INITIAL CONDITIONS, THE P Moment at initial call to CALCULATE_SOURCE &
-			!	    is different from what is specified in input IC'
-			!	    WRITE(*,*) 'P at initial Call: ', P
-			!	    WRITE(*,*) 'P in IC file: ', P_0  
-			!	    error_flag = .TRUE.
-             !   END IF
-            !END IF 
-			
-			IF(error_flag) THEN
-				WRITE(*,*) 'QUITING!!!'
-				STOP
-			END IF			
-		
+            CALL INITIALIZE_MOMIC()	
         END IF
-    
-	
-        ! ************ MOMENT ERROR CHECKING ************
-		! Check if P(0) = M(0) within some error tolerance
-		!IF(ABS(P(1) - M(1))>1e-8 .AND. AGGREGATION_CALC) THEN 
-		!	WRITE(*,*) 'ERROR: P(0):',P(1), ' /= M(0):', M(1)
-		!	STOP
-        !END IF
-	    ! Don't need this, just set P(0) to M(0)
-		
-		
-		!ALLOCATE(P(1:P_Moments))
+    	
 		
 		If (ANY(M(1) > P_in)) THEN
 			P(:) = M(1)!1.D0
@@ -339,34 +299,6 @@ INTEGER, SAVE :: NumCalls = 1
 			! Input Moments
 			P(2:) = P_in
         END IF 
-		
-		!IF(present(AGG)) THEN
-		!	IF(AGG==1) THEN
-		!		AGGREGATION = .FALSE.
-		!	ELSEIF(AGG==2) THEN
-		!		AGGREGATION = .TRUE.
-		!	END IF 
-		!END IF
-		
-		
-        ! Initialize Nucleation, Coagulation, Surface Rates, And Aggregate Rates
-	    W(:) = 0
-	    G(:) = 0
-	    R(:) = 0
-        H(:) = 0
-        Ragg(:) = 0
-        rC2H2_nuc = 0
-		rC2H2_surf = 0
-		rC2H2 = 0 
-        rCO = 0
-        rH = 0
-        rH2 = 0
-        rH2O = 0
-        rO2 = 0
-        rOH = 0
-		OXID = .TRUE.
-		mu(:) = 0
-		
 		
 		
         ! Check if MOMIC Calculation is enabled
@@ -389,16 +321,34 @@ INTEGER, SAVE :: NumCalls = 1
 			WITH THE NUMBER OF MOMENTS SPECIFIED IN THE INITIALIZATION'
 			STOP
 		END IF
-		    
-        ! Calculate Fractional MOMENTS
-		ALLOCATE(mu(mu_LO:mu_HI))
 		
+		
+		
+		! Initialize Nucleation, Coagulation, Surface Rates, And Aggregate Rates
+	    W(:) = 0
+	    G(:) = 0
+	    R(:) = 0
+        H(:) = 0
+        Ragg(:) = 0
+        rC2H2_nuc = 0
+		rC2H2_surf = 0
+		rC2H2 = 0 
+        rCO = 0
+        rH = 0
+        rH2 = 0
+        rH2O = 0
+        rO2 = 0
+        rOH = 0
+		OXID = .TRUE.
+		mu(:) = 0
+		
+		   	
         ! Interpolate reduced moments
 		CALL interpolate_mu(M,mu,mu_LO,mu_HI)		
 		
-		
 		! Oxidation Calculation Control Flag
 		IF (mu(6) <= OXID_RAT) THEN
+			WRITE(*,*) 'TURNING OFF OXIDATION'
 			OXID = .FALSE.
 		END IF
 		
@@ -435,21 +385,17 @@ INTEGER, SAVE :: NumCalls = 1
         ! Calculate Primary Particle Nucleation Rates
 		CALL NUCLEATION(M,TEMPERATURE,PRESSURE,C_C2H2,rC2H2_nuc,R,M_Moments)
 		
-		! If Number density is less than 1/cm^3 then only use Nucleation calculation,  skip the rest of calculation
-		! Like in Ranjan's Code, this helps with some cases!!
+		! If Number density is less than 1/cm^3 then only use Nucleation calculation,  
+		! skip the rest of calculation
 		IF(M(1)<150D0) THEN
             WRITE(*,*) 'Soot Number Density M(0) < 150'
             WRITE(*,*) 'Only Calculating Nucleation Source'
 			RETURN
 		END IF 
 					
-		! Check if Aggregation is turned on
-		
-		!AGGREGATION = .FALSE.
-		
-		
-		
+		! Check if Aggregation is turned on	
         If(AGGREGATION) THEN
+			! USES KAZAKOV FORMULATION
             CALL CALCULATE_SOURCE_AGG
         ELSE
             CALL CALCULATE_SOURCE_NO_AGG
@@ -466,25 +412,20 @@ INTEGER, SAVE :: NumCalls = 1
         DO i = 1,M_Moments
 			IF( isNAN(G(i)) .OR. isNAN(W(i)) .OR. isNAN(R(i))) THEN
 				WRITE(*,*) 'NAN for Output Rates'
-				!WRITE(*,*) 'R -- Gr -- Wr -- Rr'
-				!WRITE(*,*) i, G(i), W(i), R(i)
 				error_flag = .TRUE.
-				!EXIT
             END IF
         END DO 
         
         ! Check if M(n) < M(0)
-        !IF(ANY(M(2:)<M(1))) THEN
-         !   WRITE(*,*) 'Error higher moments are smaller than 0th moment'
-          !  error_flag = .True.
-        !END IF
+        IF(ANY(M(2:)<M(1))) THEN
+            WRITE(*,*) 'Error higher moments are smaller than 0th moment'
+            error_flag = .True.
+        END IF
         
 		CALL VERIFY_DISTRIBUTION(M,error_flag)
-		
-	
+			
         ! DEBUGGING STUFF
-        numCalls = numCalls + 1
-		
+        numCalls = numCalls + 1		
 
 		! Check Error Flag and Stop if error
 		IF(error_flag) THEN
@@ -512,6 +453,11 @@ INTEGER, SAVE :: NumCalls = 1
         END IF
 		
 		! f2py is not compiling if STOP is in the above if statement for some reason
+		! COMMENTING THIS OUT, SCIPY SOMETIMES USES NONPHYSICAL INPUT FOR CALCULATING 
+		! JACOBIAN WHICH CAUSES NAN OUTPUT => CLOSES MOMIC CALCULATION => CRASH 
+		! BUT IT'S NOT AN ISSUE FOR ME BECAUSE I'M NOT DOING TIME-ACCURATE CALCULATION
+		! UNCOMMENT FOR TIME ACCURATE CALCULATION
+		
 		!IF(error_flag) THEN
 		!	STOP
 		!END IF 
@@ -523,9 +469,9 @@ INTEGER, SAVE :: NumCalls = 1
         W = W/M_ref
         Ragg = Ragg/M_ref
         H = H/M_ref
-
-        ! Don't need this anymore so throw it away    		 
-		DEALLOCATE(mu)
+		
+		! Keeping mu allocated at all times now
+		!DEALLOCATE(mu)
 		
         RETURN
 		
@@ -817,6 +763,9 @@ INTEGER, SAVE :: NumCalls = 1
 	    ! Allocate Arrays to store L(x) stencil for interpolating reduced moments
 	    ALLOCATE(L_neg(3,mu_LO:-1))
 	    ALLOCATE(L_pos(0:(M_HI),0:mu_HI))
+		
+		! Allocate Reduced Order Fractional Moments
+		ALLOCATE(mu(mu_LO:mu_HI))
 		
 	    ! Allocate Temporary Arrays to store interpolant x values
 	    ! USE 1st 3 whole order moments to interpolate negative reduced values
@@ -2566,1071 +2515,7 @@ INTEGER, SAVE :: NumCalls = 1
     !END FUNCTION Calc_Jacobian_aggregate
     
 	
-   SUBROUTINE CALCULATE_SOURCE2(M,P_in,TEMPERATURE,PRESSURE,C_C2H2,C_H,C_H2,C_H2O,C_O2,C_OH,AGG, &
-        W,G,R,H,Ragg,rC2H2, rCO, rH, rH2, rH2O, rO2, rOH)
-        ! Calculate Moment Source Terms 
-        IMPLICIT NONE
-    
-        REAL(KIND=DBL), INTENT(IN), DIMENSION(:) :: M, P_in
-        REAL(KIND=DBL), INTENT(IN) :: TEMPERATURE, PRESSURE
-		REAL(KIND=DBL), INTENT(IN) :: C_C2H2,C_H,C_H2,C_H2O,C_O2,C_OH
-		INTEGER, OPTIONAL, INTENT(IN) :: AGG
-        REAL(KIND=DBL), INTENT(OUT), DIMENSION(SIZE(M)) :: W, G, R
-		REAL(KIND=DBL), INTENT(OUT), DIMENSION(SIZE(P_in)) :: H, Ragg
-        REAL(KIND=DBL), INTENT(OUT) :: rC2H2, rCO, rH, rH2, rH2O, rO2, rOH
-		REAL(KIND=DBL) :: rC2H2_nuc, rC2H2_surf
-		
-        ! Local Variables
-        REAL(KIND=DBL), ALLOCATABLE :: mu(:)
-        REAL(KIND=DBL), DIMENSION(SIZE(P_in)+1) :: P
-		!REAL(KIND=DBL), ALLOCATABLE, DIMENSION(:) :: P 
-        INTEGER :: i                         
-		LOGICAL :: error_flag = .FALSE. ! Error Flag
-		REAL(KIND=DBL) :: kn ! Knudsen Number
-		INTEGER :: COAGULATION_REGIME  ! Free-Molecular/Transitional/Continuum Regime (Determined by Knudsen #)
-		
-		REAL(KIND=DBL), DIMENSION(SIZE(M)) :: f
-		REAL(KIND=DBL) :: a,b,rsq 
-		
-        REAL(KIND=DBL), DIMENSION(SIZE(M)) :: W_C2H2, W_O2, W_OH
-                 
-        ! Initialize Moments Module:
-        ! Calculate Binomial Coefficient
-        ! Calculate Lagrange Interpolation Stencil
-        ! Calculate Number of P and R moments
-        ! Calculate lowest fraction and highest fraction moments
-        IF(.NOT. isInitialized) THEN
-            ! Read Moments Input
-            CALL INITIALIZE_MOMIC()
-		
-			! Check if correct initial conditions are being used
-			!IF(ALL(M==M_0)) THEN
-			!	CONTINUE
-			!ELSE
-			!	WRITE(*,*) 'PROBLEM READING INITIAL CONDITIONS, THE M Moment at initial call to CALCULATE_SOURCE &
-			!	is different from what is specified in input IC'
-			!	WRITE(*,*) 'M at initial Call: ', M
-			!	WRITE(*,*) 'M in IC file: ', M_0 
-			!	error_flag = .TRUE.
-            !END IF
-				
-            ! Check P moments if it's allocated
-            !IF (CALC_AGGREGATE) THEN
-			!    IF(ALL(P==P_0)) THEN 
-			!	    CONTINUE
-			 !   ELSE
-			!	    WRITE(*,*) 'PROBLEM READING INITIAL CONDITIONS, THE P Moment at initial call to CALCULATE_SOURCE &
-			!	    is different from what is specified in input IC'
-			!	    WRITE(*,*) 'P at initial Call: ', P
-			!	    WRITE(*,*) 'P in IC file: ', P_0  
-			!	    error_flag = .TRUE.
-             !   END IF
-            !END IF 
-			
-			IF(error_flag) THEN
-				WRITE(*,*) 'QUITING!!!'
-				STOP
-			END IF
-		
-        END IF
-    
 	
-        ! ************ MOMENT ERROR CHECKING ************
-		! Check if P(0) = M(0) within some error tolerance
-		!IF(ABS(P(1) - M(1))>1e-8 .AND. AGGREGATION_CALC) THEN 
-		!	WRITE(*,*) 'ERROR: P(0):',P(1), ' /= M(0):', M(1)
-		!	STOP
-        !END IF
-	    ! Don't need this, just set P(0) to M(0)
-		
-		
-		!ALLOCATE(P(1:P_Moments))
-		
-		If (ANY(M(1) > P_in)) THEN
-			P(:) = M(1)!1.D0
-		ELSE
-			! P(0) = M(0)
-			P(1) = M(1)
-			! Input Moments
-			P(2:) = P_in
-        END IF 
-		
-		!IF(present(AGG)) THEN
-		!	IF(AGG==1) THEN
-		!		AGGREGATION = .FALSE.
-		!	ELSEIF(AGG==2) THEN
-		!		AGGREGATION = .TRUE.
-		!	END IF 
-		!END IF
-		
-		
-        ! Initialize Nucleation, Coagulation, Surface Rates, And Aggregate Rates
-	    W(:) = 0
-	    G(:) = 0
-	    R(:) = 0
-        H(:) = 0
-        Ragg(:) = 0
-        rC2H2_nuc = 0
-		rC2H2_surf = 0
-		rC2H2 = 0 
-        rCO = 0
-        rH = 0
-        rH2 = 0
-        rH2O = 0
-        rO2 = 0
-        rOH = 0
-		OXID = .TRUE.
-		
-        ! Check if MOMIC Calculation is enabled
-        IF (.NOT. doSOOT) THEN
-            WRITE(*,*) 'MOMENT CALCULATION TURNED OFF IN MOMIC INPUT FILE'
-            RETURN
-        END IF
-		
-		! Check Inputs are correct
-		! THIS CAN CAUSE POTENTIAL MEMORY ISSUES IF THEY ARE NOT THE SAME
-		! MAYBE LOOK AT EDITING HOW MOMENTS ARE INPUT?
-		IF (SIZE(M) /= M_MOMENTS) THEN
-			WRITE(*,*) 'ERROR: THE NUMBER OF INPUT M MOMENTS DOES NOT MATCH UP &
-			WITH THE NUMBER OF MOMENTS SPECIFIED IN THE INPUT FILE'
-			STOP
-		END IF
-		
-		IF (AGGREGATION .AND. SIZE(P) /= P_MOMENTS) THEN
-			WRITE(*,*) 'ERROR: THE NUMBER OF INPUT P MOMENTS DOES NOT MATCH UP &
-			WITH THE NUMBER OF MOMENTS SPECIFIED IN THE INPUT FILE'
-			STOP
-		END IF
-		    
-        ! Calculate Fractional MOMENTS
-		ALLOCATE(mu(mu_LO:mu_HI))
-		
-        ! Interpolate reduced moments
-		CALL interpolate_mu(M,mu,mu_LO,mu_HI)		
-		
-		
-		! Oxidation Calculation Control Flag
-		IF (mu(6) <= OXID_RAT) THEN
-			OXID = .FALSE.
-		END IF
-		
-		
-        ! Calculate Kc, Kc' and Kf Coagulation Parameters
-		CALL COAGULATION_PARAMETERS(TEMPERATURE,PRESSURE)
-		        	
-		
-		! Calculate Average soot diameter 
-		D_soot = Soot_D_Calc(mu,mu_LO,mu_HI)
-		
-		! Calculate Knudsen Number
-		kn = 2*MFP(PRESSURE,TEMPERATURE)*(1e-2)/D_soot
-								
-		! Kn number regimes
-		IF (kn < 0.1) THEN
-			COAGULATION_REGIME = 0 ! Continuum
-		ELSEIF (kn < 10) THEN
-			COAGULATION_REGIME = 1 ! Transitional
-		ELSEIF (kn >= 10) THEN
-			COAGULATION_REGIME = 2 ! Free Molecular
-		ELSEIF (isNAN(kn)) THEN
-			WRITE(*,*) "ERROR IN Temperature or Pressure input"
-		ELSE
-			WRITE(*,*) "HOW DID YOU GET TO THIS CONDITION??? THIS SHOULD BE PHYISCALLY IMPOSSIBLE!!"
-			STOP
-		END IF 
-		  		  
-		IF (FORCE_REGIME) THEN
-			COAGULATION_REGIME = REGIME
-		END IF         
-		
-        ! Calculate Primary Particle Nucleation Rates
-		CALL NUCLEATION(M,TEMPERATURE,PRESSURE,C_C2H2,rC2H2_nuc,R,M_Moments)
-		
-		! If Number density is less than 1/cm^3 then only use Nucleation calculation,  skip the rest of calculation
-		! Like in Ranjan's Code, this helps with some cases!!
-		IF(M(1)<150D0) THEN
-            WRITE(*,*) 'Soot Number Density M(0) < 150'
-            WRITE(*,*) 'Only Calculating Nucleation Source'
-			RETURN
-		END IF 
-					
-		! Check if Aggregation is turned on
-		
-		!AGGREGATION = .FALSE.
-		
-        If(AGGREGATION) THEN
-            CALL CALCULATE_SOURCE_AGG
-        ELSE
-            CALL CALCULATE_SOURCE_NO_AGG
-        END IF
-		
-		! Get Total Rate of Nucleation and Surface Growth C2H2
-		rC2H2 = rC2H2_nuc+rC2H2_surf
-		
-		
-        ! ********************************************************
-        ! ************* ERROR CHECKING ***************************
-        ! ********************************************************
-		! Check if rates are nan
-        DO i = 1,M_Moments
-			IF( isNAN(G(i)) .OR. isNAN(W(i)) .OR. isNAN(R(i))) THEN
-				WRITE(*,*) 'NAN for Output Rates'
-				!WRITE(*,*) 'R -- Gr -- Wr -- Rr'
-				!WRITE(*,*) i, G(i), W(i), R(i)
-				error_flag = .TRUE.
-				!EXIT
-            END IF
-        END DO 
-        
-        ! Check if M(n) < M(0)
-        !IF(ANY(M(2:)<M(1))) THEN
-         !   WRITE(*,*) 'Error higher moments are smaller than 0th moment'
-          !  error_flag = .True.
-        !END IF
-        
-		CALL VERIFY_DISTRIBUTION(M,error_flag)
-		
-	
-        ! DEBUGGING STUFF
-        numCalls = numCalls + 1
-		
-
-		! Check Error Flag and Stop if error
-		IF(error_flag) THEN
-            WRITE(*,*) 'NumCalls = ',NumCalls
-			WRITE(*,*) '*******INPUTS********'
-			WRITE(*,*) 'M Moments'
-			WRITE(*,"(6ES14.3)") M
-			WRITE(*,*) 'P Moments'
-			WRITE(*,"(6ES14.3)") P
-			WRITE(*,*) 'Temperature - Pressure '
-			WRITE(*,*) TEMPERATURE, PRESSURE
-			WRITE(*,*) '[C2H2] - [H] - [H2]'
-			WRITE(*,*) C_C2H2, C_H, C_H2
-			WRITE(*,*) '[H2O] - [O2] - [OH]'
-			WRITE(*,*) C_H2O, C_O2, C_OH
-			WRITE(*,*) '******Calculations******'
-			WRITE(*,*) 'mu'
-			WRITE(*,*) mu
-			WRITE(*,*) '---- Gr Rates --- '
-			WRITE(*,*) G
-			WRITE(*,*) '---- Wr Rates --- '
-			WRITE(*,*) W
-			WRITE(*,*) '---- Rr Rates --- '
-			WRITE(*,*) R			
-        END IF
-		
-		! f2py is not compiling if STOP is in the above if statement for some reason
-		!IF(error_flag) THEN
-		!	STOP
-		!END IF 
-		
-        ! Normalize all Equations by M_ref
-        R = R/M_ref
-        G = G/M_ref
-        W = W/M_ref
-        Ragg = Ragg/M_ref
-        H = H/M_ref
-
-        ! Don't need this anymore so throw it away    		 
-		DEALLOCATE(mu)
-		!DEALLOCATE(P)
-		
-        RETURN
-		
-    CONTAINS
-		SUBROUTINE VERIFY_DISTRIBUTION(M,error_flag)
-			! Check Realizability of Distribution Function
-			
-			IMPLICIT NONE
-			REAL(KIND=DBL), INTENT(IN), DIMENSION(0:) :: M
-			LOGICAL, INTENT(OUT) :: error_flag
-			
-			
-			! Initialize error_flag
-			error_flag = .FALSE.
-			
-			IF(M(0)<1) THEN
-				WRITE(*,*) 'ERROR IN DISTRIBUTION: M(0) < 1'
-				error_flag = .TRUE.
-			ELSEIF(M(0)*M(2)/(M(1)*M(1))<1) THEN
-				WRITE(*,*) 'ERROR in Distribution: M(0)M(2)/M(1)^2 < 1'
-				error_flag = .TRUE.
-			END IF
-		END SUBROUTINE
-	
-		SUBROUTINE PRIMARY_COAGULATION(M,mu,mu_LO,mu_HI,G)
-		
-			IMPLICIT NONE
-			REAL(KIND=DBL), INTENT(IN), DIMENSION(0:) :: M
-			INTEGER, INTENT(IN) :: mu_LO, mu_HI	! Need to specify these here otherwise f2py complains!
-			REAL(KIND=DBL), INTENT(IN), DIMENSION(mu_LO:mu_HI) :: mu
-			REAL(KIND=DBL), INTENT(OUT), DIMENSION(0:SIZE(M)-1) :: G
-		
-		
-			IF(COAGULATION_REGIME==0) THEN
-				CALL PRIMARY_COAGULATION_C(M,mu,mu_LO,mu_HI,G)
-				WRITE(*,*) 'Coagulation is being calculated for Continuum Regime'
-			ELSEIF(COAGULATION_REGIME==1) THEN
-				CALL PRIMARY_COAGULATION_TR(M,mu,mu_LO,mu_HI,G)
-				WRITE(*,*) 'Coagulation is being calculated for Transitional Regime'
-			ELSEIF(COAGULATION_REGIME==2) THEN
-				CALL PRIMARY_COAGULATION_FM(M,mu,mu_LO,mu_HI,G)
-				WRITE(*,*) 'Coagulation is being calculated for Free Molecular Regime'
-			ELSE
-				WRITE(*,*) "WRONG COAGULATION REGIME FLAG, I DID SOMETHTHING WRONG?"
-				STOP
-			END IF 
-		
-		END SUBROUTINE PRIMARY_COAGULATION
-		
-		SUBROUTINE PRIMARY_COAGULATION_AGGREGATE(M,P,mu,mu_LO,mu_HI,pii,G)
-			! Calculate Primary Coagulation with aggregation depending on COAGULATION_REGIME Flag
-			IMPLICIT NONE
-			REAL(KIND=DBL), INTENT(IN), DIMENSION(:) :: M, P 
-			INTEGER, INTENT(IN) :: mu_LO, mu_HI	! Need to specify these here otherwise f2py complains!
-			REAL(KIND=DBL), INTENT(IN), DIMENSION(mu_LO:mu_HI) :: mu
-			REAL(KIND=DBL), INTENT(IN), DIMENSION(0:SIZE(P)-1,-2:2) :: pii
-			REAL(KIND=DBL), INTENT(OUT), DIMENSION(SIZE(M)) :: G
-			
-			IF(COAGULATION_REGIME==0) THEN
-				CALL PRIMARY_COAGULATION_AGGREGATE_C(M,P,mu,mu_LO,mu_HI,pii,G)
-				WRITE(*,*) 'Coagulation is being calculated for Continuum Regime'
-			ELSEIF(COAGULATION_REGIME==1) THEN
-				CALL PRIMARY_COAGULATION_AGGREGATE_TR(M,P,mu,mu_LO,mu_HI,pii,G)
-				WRITE(*,*) 'Coagulation is being calculated for Transitional Regime'
-			ELSEIF(COAGULATION_REGIME==2) THEN
-				CALL PRIMARY_COAGULATION_AGGREGATE_FM(M,P,mu,mu_LO,mu_HI,pii,G)
-				WRITE(*,*) 'Coagulation is being calculated for Free Molecular Regime'
-			ELSE
-				WRITE(*,*) "WRONG COAGULATION REGIME FLAG, I DID SOMETHTHING WRONG"
-				STOP
-			END IF 	
-		
-		END SUBROUTINE PRIMARY_COAGULATION_AGGREGATE
-		
-		SUBROUTINE COAGULATION_AGGREGATE(M,P,mu,mu_LO,mu_HI,pii,H)
-			! Calculate Aggregate Coagulation depending on COAGULATION_REGIME Flag
-			
-			IMPLICIT NONE
-			
-			!REAL(KIND=DBL), DIMENSION(:), INTENT(IN) :: M, P 
-			REAL(KIND=DBL), INTENT(IN), DIMENSION(:) :: M,P
-			INTEGER, INTENT(IN) :: mu_LO, mu_HI	! Need to specify these here otherwise f2py complains!
-			REAL(KIND=DBL), DIMENSION(mu_LO:mu_HI), INTENT(IN) :: mu 
-			REAL(KIND=DBL), DIMENSION(0:SIZE(P)-1,-2:2), INTENT(IN) :: pii
-			REAL(KIND=DBL), DIMENSION(1:SIZE(P)-1), INTENT(OUT) :: H
-			
-			IF(COAGULATION_REGIME==0) THEN
-				CALL COAGULATION_AGGREGATE_C(M,P,mu,mu_LO,mu_HI,pii,H)
-				WRITE(*,*) 'Coagulation is being calculated for Continuum Regime'
-			ELSEIF(COAGULATION_REGIME==1) THEN
-				CALL COAGULATION_AGGREGATE_TR(M,P,mu,mu_LO,mu_HI,pii,H)
-				WRITE(*,*) 'Coagulation is being calculated for Transitional Regime'
-			ELSEIF(COAGULATION_REGIME==2) THEN
-				CALL COAGULATION_AGGREGATE_FM(M,P,mu,mu_LO,mu_HI,pii,H)
-				WRITE(*,*) 'Coagulation is being calculated for Free Molecular Regime'
-			ELSE
-				WRITE(*,*) "WRONG COAGULATION REGIME FLAG, I DID SOMETHTHING WRONG"
-				STOP
-			END IF 		
-		
-		END SUBROUTINE COAGULATION_AGGREGATE
-	
-        SUBROUTINE CALCULATE_SOURCE_NO_AGG()
-                ! Calculate Source Terms without Aggregation
-                IMPLICIT NONE
-        
-                WRITE(*,*) 'Calculating Moment Rates with out Aggregation'
-                
-				
-				CALL PRIMARY_COAGULATION(M,mu,mu_LO,mu_HI,G)
-				
-				
-				CALL SURFACE_GROWTH(M,mu,mu_LO,mu_HI,TEMPERATURE,C_C2H2,C_H,C_H2,C_H2O,C_O2,C_OH,&
-									rC2H2_surf,rCO,rH,rH2,rH2O,rO2,rOH,W_C2H2,W_O2,W_OH,W)
-				
-				
-				! If Oxidation Regime then base surface rates on M1, like in Ranjan's code
-
-				IF(W(2) < 0) THEN
-					
-					WRITE(*,*) '*** IN OXIDATION REGIME, Basing Moments on M(1) ***'
-					DO i = 1,SIZE(M)-1
-						f(i) = log(mu(6*i))
-					END DO
-					
-					
-					CALL linear(SIZE(M)-1,f,a,b,rsq)
-					
-						
-					DO i = 4,6*(SIZE(M)-1)-1,6
-						mu(i) = EXP(a+b*i/6.D0)
-					END DO 
-					
-					
-					!WRITE(*,*) '*******ORIGINAL W********'
-					!WRITE(*,*) W 
-					
-					
-					CALL SURFACE_GROWTH(M,mu,mu_LO,mu_HI,TEMPERATURE,C_C2H2,C_H,C_H2,C_H2O,C_O2,C_OH,&
-				rC2H2_surf,rCO,rH,rH2,rH2O,rO2,rOH,W_C2H2,W_O2,W_OH,W)
-						
-				
-					DO i =2,SIZE(M)
-						W(i) = W(i)*M(i)/M(1)/EXP(a+b*i)
-					END DO
-					
-
-				
-					!WRITE(*,*) '*****New W********'
-					!WRITE(*,*) W
-					!STOP
-				
-				END IF 
-                
-				
-				! Turn off Source Terms Cutoff Criteria Like in S.P Roy, Haworth Paper
-				! For Strongly Oxidizing Environment
-				!IF (W(2)<0 .AND. M(2)<32*M(1)) THEN
-				!	W(:) = 0
-				!	RETURN
-				!END IF 
-				
-				
-            END SUBROUTINE CALCULATE_SOURCE_NO_AGG
-            
-            SUBROUTINE CALCULATE_SOURCE_AGG()
-	            ! CALCULATE SOURCE TERMS FOR METHOD OF MOMENTS USING KAZAKOV AGGREGATION MODEL
-	            ! ASSUMING Average Particle Diameter Dsoot > D*
-                IMPLICIT NONE
-            
-                ! Local Variable for reduced P moment
-                REAL(KIND=DBL), DIMENSION(0:SIZE(P)-1,-2:2) :: pii
-                
-                ! Initialize Variables
-                pii(:,:) = 0
-                
-                WRITE(*,*) 'Calculating Moment Rates with Aggregation Enabled'
-		
-				IF(present(AGG)) THEN
-					IF (AGG==2) THEN
-						D_soot =2*d_star+1
-						WRITE(*,*) 'FORCING AGGREGATION ON'
-					ELSEIF(AGG==1) THEN
-						D_soot = d_star/2-1
-						WRITE(*,*) 'FORCING AGGREGATION OFF'
-					ENDIF
-				ENDIF
-		
-                IF(D_soot > d_star) THEN
-
-	                ! Interpolate pi 
-	                CALL interpolate_pii(P,pii)
-                    
-					
-                    ! Calculate Aggregate Nucleation
-                    Ragg(:) = R(1)
-                    
-                    ! If P terms are 0 then only use nucleation term and non-aggregate coagulation, skip rest of calculation
-                    IF(ANY(P == 0)) THEN
-                        CALL PRIMARY_COAGULATION(M,mu,mu_LO,mu_HI,G)
-                        RETURN
-                    END IF
-                    
-            
-	                ! Calculate Coagulation
-	                CALL PRIMARY_COAGULATION_AGGREGATE(M,P,mu,mu_LO,mu_HI,pii,G)
-
-					! Calculate Aggregate Coagulation
-					CALL COAGULATION_AGGREGATE(M,P,mu,mu_LO,mu_HI,pii,H)
-			
-					! Calculate Surface Growth 
-					CALL SURFACE_GROWTH_AGG(M,P,pii,mu,mu_LO,mu_HI,TEMPERATURE,C_C2H2,C_H,C_H2,C_H2O,C_O2,C_OH,&
-											rC2H2_surf,rCO,rH,rH2,rH2O,rO2,rOH,W_C2H2,W_O2,W_OH,W)
-		
-		
-					
-					! If Oxidation Regime then base surface rates on M1, like in Ranjan's code
-					IF(W(2)<0) THEN
-						DO i = 1,SIZE(M)-1
-							f(i) = log(mu(3*i))
-						END DO	
-						
-						CALL linear(SIZE(M)-1,f,a,b,rsq)
-							
-						DO i = 2,3*(SIZE(M)-1)-1,3
-							mu(i) = EXP(a+b*i/3.D0)
-						END DO 
-						
-						
-						!WRITE(*,*) '*******ORIGINAL W********'
-						!WRITE(*,*) W 
-						
-						CALL SURFACE_GROWTH_AGG(M,P,pii,mu,mu_LO,mu_HI,TEMPERATURE,C_C2H2,C_H,C_H2,C_H2O,C_O2,C_OH,&
-											rC2H2_surf,rCO,rH,rH2,rH2O,rO2,rOH,W_C2H2,W_O2,W_OH,W)
-					
-					
-						DO i =2,SIZE(M)
-							W(i) = W(i)*M(i)/M(1)/EXP(a+b*i)
-						END DO
-						
-						! Oxidation should also result in reduced number density as particles get oxidized
-						! Original Formulation does not account for that, so using this to account for it
-						! W0 = W_OXIDATION/Cmin
-						! Alternatively maybe set M0 = M1/Cmin?
-						
-						W(0) = (W_O2(1)+W_OH(1))/10D0
-						
-						
-						!WRITE(*,*) '*****New W********'
-						!WRITE(*,*) W
-						!STOP
-					
-					END IF 							
-                                        
-                ELSE
-                    WRITE(*,*) 'Average Soot D < d*'
-                    CALL CALCULATE_SOURCE_NO_AGG()
-                END IF
-        
-				RETURN
-            END SUBROUTINE CALCULATE_SOURCE_AGG
-                        
-	END SUBROUTINE CALCULATE_SOURCE2
-	
-	
-	SUBROUTINE CALCULATE_SOURCE_SWITCHER(M,P_in,TEMPERATURE,PRESSURE,C_C2H2,C_H,C_H2,C_H2O,C_O2,C_OH, COAGULATION_REGIME, AGGREGATE, &
-        W,G,R,H,Ragg,rC2H2, rCO, rH, rH2, rH2O, rO2, rOH)
-        ! Calculate Moment Source Terms 
-        IMPLICIT NONE
-    
-        REAL(KIND=DBL), INTENT(IN), DIMENSION(:) :: M, P_in
-        REAL(KIND=DBL), INTENT(IN) :: TEMPERATURE, PRESSURE
-		REAL(KIND=DBL), INTENT(IN) :: C_C2H2,C_H,C_H2,C_H2O,C_O2,C_OH
-		INTEGER, INTENT(IN) :: COAGULATION_REGIME
-		LOGICAL, INTENT(IN) :: AGGREGATE
-        REAL(KIND=DBL), INTENT(OUT), DIMENSION(SIZE(M)) :: W, G, R
-		REAL(KIND=DBL), INTENT(OUT), DIMENSION(SIZE(P_in)) :: H, Ragg
-        REAL(KIND=DBL), INTENT(OUT) :: rC2H2, rCO, rH, rH2, rH2O, rO2, rOH
-		REAL(KIND=DBL) :: rC2H2_nuc, rC2H2_surf
-		
-
-		
-		
-        ! Local Variables
-        REAL(KIND=DBL), ALLOCATABLE :: mu(:)
-        REAL(KIND=DBL), DIMENSION(SIZE(P_in)+1) :: P
-		!REAL(KIND=DBL), ALLOCATABLE, DIMENSION(:) :: P 
-        INTEGER :: i                         
-		LOGICAL :: error_flag = .FALSE. ! Error Flag
-		REAL(KIND=DBL) :: kn ! Knudsen Number
-		!INTEGER :: COAGULATION_REGIME  ! Free-Molecular/Transitional/Continuum Regime (Determined by Knudsen #)
-		
-		REAL(KIND=DBL), DIMENSION(SIZE(M)) :: f
-		REAL(KIND=DBL) :: a,b,rsq 
-		
-        REAL(KIND=DBL), DIMENSION(SIZE(M)) :: W_C2H2, W_O2, W_OH
-                 
-        ! Initialize Moments Module:
-        ! Calculate Binomial Coefficient
-        ! Calculate Lagrange Interpolation Stencil
-        ! Calculate Number of P and R moments
-        ! Calculate lowest fraction and highest fraction moments
-        IF(.NOT. isInitialized) THEN
-            ! Read Moments Input
-            CALL INITIALIZE_MOMIC()
-		
-			! Check if correct initial conditions are being used
-			!IF(ALL(M==M_0)) THEN
-			!	CONTINUE
-			!ELSE
-			!	WRITE(*,*) 'PROBLEM READING INITIAL CONDITIONS, THE M Moment at initial call to CALCULATE_SOURCE &
-			!	is different from what is specified in input IC'
-			!	WRITE(*,*) 'M at initial Call: ', M
-			!	WRITE(*,*) 'M in IC file: ', M_0 
-			!	error_flag = .TRUE.
-            !END IF
-				
-            ! Check P moments if it's allocated
-            !IF (CALC_AGGREGATE) THEN
-			!    IF(ALL(P==P_0)) THEN 
-			!	    CONTINUE
-			 !   ELSE
-			!	    WRITE(*,*) 'PROBLEM READING INITIAL CONDITIONS, THE P Moment at initial call to CALCULATE_SOURCE &
-			!	    is different from what is specified in input IC'
-			!	    WRITE(*,*) 'P at initial Call: ', P
-			!	    WRITE(*,*) 'P in IC file: ', P_0  
-			!	    error_flag = .TRUE.
-             !   END IF
-            !END IF 
-			
-			IF(error_flag) THEN
-				WRITE(*,*) 'QUITING!!!'
-				STOP
-			END IF
-		
-        END IF
-    
-	
-        ! ************ MOMENT ERROR CHECKING ************
-		! Check if P(0) = M(0) within some error tolerance
-		!IF(ABS(P(1) - M(1))>1e-8 .AND. AGGREGATION_CALC) THEN 
-		!	WRITE(*,*) 'ERROR: P(0):',P(1), ' /= M(0):', M(1)
-		!	STOP
-        !END IF
-	    ! Don't need this, just set P(0) to M(0)
-		
-		
-		!ALLOCATE(P(1:P_Moments))
-		
-		
-		
-		If (ANY(M(1) > P_in)) THEN
-			P(:) = M(1)!1.D0
-		ELSE
-			! P(0) = M(0)
-			P(1) = M(1)
-			! Input Moments
-			P(2:) = P_in
-        END IF 
-		
-		!IF(present(AGG)) THEN
-		!	IF(AGG==1) THEN
-		!		AGGREGATION = .FALSE.
-		!	ELSEIF(AGG==2) THEN
-		!		AGGREGATION = .TRUE.
-		!	END IF 
-		!END IF
-		
-		
-        ! Initialize Nucleation, Coagulation, Surface Rates, And Aggregate Rates
-	    W(:) = 0
-	    G(:) = 0
-	    R(:) = 0
-        H(:) = 0
-        Ragg(:) = 0
-        rC2H2_nuc = 0
-		rC2H2_surf = 0
-		rC2H2 = 0 
-        rCO = 0
-        rH = 0
-        rH2 = 0
-        rH2O = 0
-        rO2 = 0
-        rOH = 0
-		OXID = .TRUE.
-		
-        
-        ! Check if MOMIC Calculation is enabled
-        IF (.NOT. doSOOT) THEN
-            WRITE(*,*) 'MOMENT CALCULATION TURNED OFF IN MOMIC INPUT FILE'
-            RETURN
-        END IF
-		
-		! Check Inputs are correct
-		! THIS CAN CAUSE POTENTIAL MEMORY ISSUES IF THEY ARE NOT THE SAME
-		! MAYBE LOOK AT EDITING HOW MOMENTS ARE INPUT?
-		IF (SIZE(M) /= M_MOMENTS) THEN
-			WRITE(*,*) 'ERROR: THE NUMBER OF INPUT M MOMENTS DOES NOT MATCH UP &
-			WITH THE NUMBER OF MOMENTS SPECIFIED IN THE INPUT FILE'
-			STOP
-		END IF
-		
-		IF (AGGREGATION .AND. SIZE(P) /= P_MOMENTS) THEN
-			WRITE(*,*) 'ERROR: THE NUMBER OF INPUT P MOMENTS DOES NOT MATCH UP &
-			WITH THE NUMBER OF MOMENTS SPECIFIED IN THE INPUT FILE'
-			STOP
-		END IF
-		    
-        ! Calculate Fractional MOMENTS
-		ALLOCATE(mu(mu_LO:mu_HI))
-		
-        ! Interpolate reduced moments
-		CALL interpolate_mu(M,mu,mu_LO,mu_HI)		
-		
-		
-		! Oxidation Calculation Control Flag
-		IF (mu(6) <= OXID_RAT) THEN
-			OXID = .FALSE.
-		END IF
-		
-        ! Calculate Kc, Kc' and Kf Coagulation Parameters
-		CALL COAGULATION_PARAMETERS(TEMPERATURE,PRESSURE)
-		
-		! Calculate Average soot diameter 
-		D_soot = Soot_D_Calc(mu,mu_LO,mu_HI)
-		
-		! Calculate Knudsen Number
-		kn = 2*MFP(PRESSURE,TEMPERATURE)*(1e-2)/D_soot
-		
-		! Kn number regimes
-		!IF (kn < 0.1) THEN
-		!	COAGULATION_REGIME = 0 ! Continuum
-		!ELSEIF (kn < 10) THEN
-		!	COAGULATION_REGIME = 1 ! Transitional
-		!ELSEIF (kn >= 10) THEN
-		!	COAGULATION_REGIME = 2 ! Free Molecular
-		!ELSEIF (isNAN(kn)) THEN
-		!	WRITE(*,*) "ERROR IN Temperature or Pressure input"
-		!ELSE
-		!	WRITE(*,*) "HOW DID YOU GET TO THIS CONDITION??? THIS SHOULD BE PHYISCALLY IMPOSSIBLE!!"
-		!	STOP
-		!END IF 
-		  		  
-		!IF (FORCE_REGIME) THEN
-		!	COAGULATION_REGIME = REGIME
-		!END IF         
-		
-        ! Calculate Primary Particle Nucleation Rates
-		CALL NUCLEATION(M,TEMPERATURE,PRESSURE,C_C2H2,rC2H2_nuc,R,M_Moments)
-		
-		! If Number density is less than 1/cm^3 then only use Nucleation calculation,  skip the rest of calculation
-		! Like in Ranjan's Code, this helps with some cases!!
-		IF(M(1)<150D0) THEN
-            WRITE(*,*) 'Soot Number Density M(0) < 150'
-            WRITE(*,*) 'Only Calculating Nucleation Source'
-			RETURN
-		END IF 
-					
-		! Check if Aggregation is turned on
-		
-		!AGGREGATION = .FALSE.
-		
-		
-        If(AGGREGATE) THEN
-            CALL CALCULATE_SOURCE_AGG
-        ELSE
-            CALL CALCULATE_SOURCE_NO_AGG
-        END IF
-		
-		! Get Total Rate of Nucleation and Surface Growth C2H2
-		rC2H2 = rC2H2_nuc+rC2H2_surf
-		
-
-        ! ********************************************************
-        ! ************* ERROR CHECKING ***************************
-        ! ********************************************************
-		! Check if rates are nan
-        DO i = 1,M_Moments
-			IF( isNAN(G(i)) .OR. isNAN(W(i)) .OR. isNAN(R(i))) THEN
-				WRITE(*,*) 'NAN for Output Rates'
-				!WRITE(*,*) 'R -- Gr -- Wr -- Rr'
-				!WRITE(*,*) i, G(i), W(i), R(i)
-				error_flag = .TRUE.
-				!EXIT
-            END IF
-        END DO 
-        
-        ! Check if M(n) < M(0)
-        !IF(ANY(M(2:)<M(1))) THEN
-         !   WRITE(*,*) 'Error higher moments are smaller than 0th moment'
-          !  error_flag = .True.
-        !END IF
-        
-		CALL VERIFY_DISTRIBUTION(M,error_flag)
-		
-	
-        ! DEBUGGING STUFF
-        numCalls = numCalls + 1
-		
-
-		! Check Error Flag and Stop if error
-		IF(error_flag) THEN
-            WRITE(*,*) 'NumCalls = ',NumCalls
-			WRITE(*,*) '*******INPUTS********'
-			WRITE(*,*) 'M Moments'
-			WRITE(*,"(6ES14.3)") M
-			WRITE(*,*) 'P Moments'
-			WRITE(*,"(6ES14.3)") P
-			WRITE(*,*) 'Temperature - Pressure '
-			WRITE(*,*) TEMPERATURE, PRESSURE
-			WRITE(*,*) '[C2H2] - [H] - [H2]'
-			WRITE(*,*) C_C2H2, C_H, C_H2
-			WRITE(*,*) '[H2O] - [O2] - [OH]'
-			WRITE(*,*) C_H2O, C_O2, C_OH
-			WRITE(*,*) '******Calculations******'
-			WRITE(*,*) 'mu'
-			WRITE(*,*) mu
-			WRITE(*,*) '---- Gr Rates --- '
-			WRITE(*,*) G
-			WRITE(*,*) '---- Wr Rates --- '
-			WRITE(*,*) W
-			WRITE(*,*) '---- Rr Rates --- '
-			WRITE(*,*) R			
-        END IF
-		
-		! f2py is not compiling if STOP is in the above if statement for some reason
-		!IF(error_flag) THEN
-		!	STOP
-		!END IF 
-		
-        ! Normalize all Equations by M_ref
-        R = R/M_ref
-        G = G/M_ref
-        W = W/M_ref
-        Ragg = Ragg/M_ref
-        H = H/M_ref
-
-        ! Don't need this anymore so throw it away    		 
-		DEALLOCATE(mu)
-		!DEALLOCATE(P)
-		
-        RETURN
-		
-    CONTAINS
-		SUBROUTINE VERIFY_DISTRIBUTION(M,error_flag)
-			! Check Realizability of Distribution Function
-			
-			IMPLICIT NONE
-			REAL(KIND=DBL), INTENT(IN), DIMENSION(0:) :: M
-			LOGICAL, INTENT(OUT) :: error_flag
-			
-			
-			! Initialize error_flag
-			error_flag = .FALSE.
-			
-			IF(M(0)<1) THEN
-				WRITE(*,*) 'ERROR IN DISTRIBUTION: M(0) < 1'
-				error_flag = .TRUE.
-			ELSEIF(M(0)*M(2)/(M(1)*M(1))<1) THEN
-				WRITE(*,*) 'ERROR in Distribution: M(0)M(2)/M(1)^2 < 1'
-				error_flag = .TRUE.
-			END IF
-		END SUBROUTINE
-	
-		SUBROUTINE PRIMARY_COAGULATION(M,mu,mu_LO,mu_HI,G)
-		
-			IMPLICIT NONE
-			REAL(KIND=DBL), INTENT(IN), DIMENSION(0:) :: M
-			INTEGER, INTENT(IN) :: mu_LO, mu_HI	! Need to specify these here otherwise f2py complains!
-			REAL(KIND=DBL), INTENT(IN), DIMENSION(mu_LO:mu_HI) :: mu
-			REAL(KIND=DBL), INTENT(OUT), DIMENSION(0:SIZE(M)-1) :: G
-		
-		
-			IF(COAGULATION_REGIME==0) THEN
-				CALL PRIMARY_COAGULATION_C(M,mu,mu_LO,mu_HI,G)
-				WRITE(*,*) 'Coagulation is being calculated for Continuum Regime'
-			ELSEIF(COAGULATION_REGIME==1) THEN
-				CALL PRIMARY_COAGULATION_TR(M,mu,mu_LO,mu_HI,G)
-				WRITE(*,*) 'Coagulation is being calculated for Transitional Regime'
-			ELSEIF(COAGULATION_REGIME==2) THEN
-				CALL PRIMARY_COAGULATION_FM(M,mu,mu_LO,mu_HI,G)
-				WRITE(*,*) 'Coagulation is being calculated for Free Molecular Regime'
-			ELSE
-				WRITE(*,*) "WRONG COAGULATION REGIME FLAG, I DID SOMETHTHING WRONG?"
-				STOP
-			END IF 
-		
-		END SUBROUTINE PRIMARY_COAGULATION
-		
-		SUBROUTINE PRIMARY_COAGULATION_AGGREGATE(M,P,mu,mu_LO,mu_HI,pii,G)
-			! Calculate Primary Coagulation with aggregation depending on COAGULATION_REGIME Flag
-			IMPLICIT NONE
-			REAL(KIND=DBL), INTENT(IN), DIMENSION(:) :: M, P 
-			INTEGER, INTENT(IN) :: mu_LO, mu_HI	! Need to specify these here otherwise f2py complains!
-			REAL(KIND=DBL), INTENT(IN), DIMENSION(mu_LO:mu_HI) :: mu
-			REAL(KIND=DBL), INTENT(IN), DIMENSION(0:SIZE(P)-1,-2:2) :: pii
-			REAL(KIND=DBL), INTENT(OUT), DIMENSION(SIZE(M)) :: G
-			
-			IF(COAGULATION_REGIME==0) THEN
-				CALL PRIMARY_COAGULATION_AGGREGATE_C(M,P,mu,mu_LO,mu_HI,pii,G)
-				WRITE(*,*) 'Coagulation is being calculated for Continuum Regime'
-			ELSEIF(COAGULATION_REGIME==1) THEN
-				CALL PRIMARY_COAGULATION_AGGREGATE_TR(M,P,mu,mu_LO,mu_HI,pii,G)
-				WRITE(*,*) 'Coagulation is being calculated for Transitional Regime'
-			ELSEIF(COAGULATION_REGIME==2) THEN
-				CALL PRIMARY_COAGULATION_AGGREGATE_FM(M,P,mu,mu_LO,mu_HI,pii,G)
-				WRITE(*,*) 'Coagulation is being calculated for Free Molecular Regime'
-			ELSE
-				WRITE(*,*) "WRONG COAGULATION REGIME FLAG, I DID SOMETHTHING WRONG"
-				STOP
-			END IF 	
-		
-		END SUBROUTINE PRIMARY_COAGULATION_AGGREGATE
-		
-		SUBROUTINE COAGULATION_AGGREGATE(M,P,mu,mu_LO,mu_HI,pii,H)
-			! Calculate Aggregate Coagulation depending on COAGULATION_REGIME Flag
-			
-			IMPLICIT NONE
-			
-			!REAL(KIND=DBL), DIMENSION(:), INTENT(IN) :: M, P 
-			REAL(KIND=DBL), INTENT(IN), DIMENSION(:) :: M,P
-			INTEGER, INTENT(IN) :: mu_LO, mu_HI	! Need to specify these here otherwise f2py complains!
-			REAL(KIND=DBL), DIMENSION(mu_LO:mu_HI), INTENT(IN) :: mu 
-			REAL(KIND=DBL), DIMENSION(0:SIZE(P)-1,-2:2), INTENT(IN) :: pii
-			REAL(KIND=DBL), DIMENSION(1:SIZE(P)-1), INTENT(OUT) :: H
-			
-			IF(COAGULATION_REGIME==0) THEN
-				CALL COAGULATION_AGGREGATE_C(M,P,mu,mu_LO,mu_HI,pii,H)
-				WRITE(*,*) 'Coagulation is being calculated for Continuum Regime'
-			ELSEIF(COAGULATION_REGIME==1) THEN
-				CALL COAGULATION_AGGREGATE_TR(M,P,mu,mu_LO,mu_HI,pii,H)
-				WRITE(*,*) 'Coagulation is being calculated for Transitional Regime'
-			ELSEIF(COAGULATION_REGIME==2) THEN
-				CALL COAGULATION_AGGREGATE_FM(M,P,mu,mu_LO,mu_HI,pii,H)
-				WRITE(*,*) 'Coagulation is being calculated for Free Molecular Regime'
-			ELSE
-				WRITE(*,*) "WRONG COAGULATION REGIME FLAG, I DID SOMETHTHING WRONG"
-				STOP
-			END IF 		
-		
-		END SUBROUTINE COAGULATION_AGGREGATE
-	
-        SUBROUTINE CALCULATE_SOURCE_NO_AGG()
-                ! Calculate Source Terms without Aggregation
-                IMPLICIT NONE
-        
-                WRITE(*,*) 'Calculating Moment Rates with out Aggregation'
-                
-				
-				CALL PRIMARY_COAGULATION(M,mu,mu_LO,mu_HI,G)
-				
-				
-				CALL SURFACE_GROWTH(M,mu,mu_LO,mu_HI,TEMPERATURE,C_C2H2,C_H,C_H2,C_H2O,C_O2,C_OH,&
-									rC2H2_surf,rCO,rH,rH2,rH2O,rO2,rOH,W_C2H2,W_O2,W_OH,W)
-				
-				
-				! If Oxidation Regime then base surface rates on M1, like in Ranjan's code
-
-				IF(W(2) < 0) THEN
-					
-					WRITE(*,*) '*** IN OXIDATION REGIME, Basing Moments on M(1) ***'
-					DO i = 1,SIZE(M)-1
-						f(i) = log(mu(6*i))
-					END DO
-					
-					
-					CALL linear(SIZE(M)-1,f,a,b,rsq)
-					
-						
-					DO i = 4,6*(SIZE(M)-1)-1,6
-						mu(i) = EXP(a+b*i/6.D0)
-					END DO 
-					
-					
-					!WRITE(*,*) '*******ORIGINAL W********'
-					!WRITE(*,*) W 
-					
-					
-					CALL SURFACE_GROWTH(M,mu,mu_LO,mu_HI,TEMPERATURE,C_C2H2,C_H,C_H2,C_H2O,C_O2,C_OH,&
-				rC2H2_surf,rCO,rH,rH2,rH2O,rO2,rOH,W_C2H2,W_O2,W_OH,W)
-						
-				
-					DO i =2,SIZE(M)
-						W(i) = W(i)*M(i)/M(1)/EXP(a+b*i)
-					END DO
-					
-
-				
-					!WRITE(*,*) '*****New W********'
-					!WRITE(*,*) W
-					!STOP
-				
-				END IF 
-                
-				
-				! Turn off Source Terms Cutoff Criteria Like in S.P Roy, Haworth Paper
-				! For Strongly Oxidizing Environment
-				!IF (W(2)<0 .AND. M(2)<32*M(1)) THEN
-				!	W(:) = 0
-				!	RETURN
-				!END IF 
-				
-				
-            END SUBROUTINE CALCULATE_SOURCE_NO_AGG
-            
-            SUBROUTINE CALCULATE_SOURCE_AGG()
-	            ! CALCULATE SOURCE TERMS FOR METHOD OF MOMENTS USING KAZAKOV AGGREGATION MODEL
-	            ! ASSUMING Average Particle Diameter Dsoot > D*
-                IMPLICIT NONE
-            
-                ! Local Variable for reduced P moment
-                REAL(KIND=DBL), DIMENSION(0:SIZE(P)-1,-2:2) :: pii
-                
-                ! Initialize Variables
-                pii(:,:) = 0
-                
-                WRITE(*,*) 'Calculating Moment Rates with Aggregation Enabled'
-		
-		
-                IF(.TRUE.) THEN !IF(D_soot > d_star) THEN
-
-	                ! Interpolate pi 
-	                CALL interpolate_pii(P,pii)
-                    
-					
-                    ! Calculate Aggregate Nucleation
-                    Ragg(:) = R(1)
-                    
-                    ! If P terms are 0 then only use nucleation term and non-aggregate coagulation, skip rest of calculation
-                    IF(ANY(P == 0)) THEN
-                        CALL PRIMARY_COAGULATION(M,mu,mu_LO,mu_HI,G)
-                        RETURN
-                    END IF
-                    
-            
-	                ! Calculate Coagulation
-	                CALL PRIMARY_COAGULATION_AGGREGATE(M,P,mu,mu_LO,mu_HI,pii,G)
-
-					! Calculate Aggregate Coagulation
-					CALL COAGULATION_AGGREGATE(M,P,mu,mu_LO,mu_HI,pii,H)
-			
-					! Calculate Surface Growth 
-					CALL SURFACE_GROWTH_AGG(M,P,pii,mu,mu_LO,mu_HI,TEMPERATURE,C_C2H2,C_H,C_H2,C_H2O,C_O2,C_OH,&
-											rC2H2_surf,rCO,rH,rH2,rH2O,rO2,rOH,W_C2H2,W_O2,W_OH,W)
-		
-		
-					
-					! If Oxidation Regime then base surface rates on M1, like in Ranjan's code
-					IF(W(2)<0) THEN
-						DO i = 1,SIZE(M)-1
-							f(i) = log(mu(3*i))
-						END DO	
-						
-						CALL linear(SIZE(M)-1,f,a,b,rsq)
-							
-						DO i = 2,3*(SIZE(M)-1)-1,3
-							mu(i) = EXP(a+b*i/3.D0)
-						END DO 
-						
-						
-						!WRITE(*,*) '*******ORIGINAL W********'
-						!WRITE(*,*) W 
-						
-						CALL SURFACE_GROWTH_AGG(M,P,pii,mu,mu_LO,mu_HI,TEMPERATURE,C_C2H2,C_H,C_H2,C_H2O,C_O2,C_OH,&
-											rC2H2_surf,rCO,rH,rH2,rH2O,rO2,rOH,W_C2H2,W_O2,W_OH,W)
-					
-					
-						DO i =2,SIZE(M)
-							W(i) = W(i)*M(i)/M(1)/EXP(a+b*i)
-						END DO
-						
-						! Oxidation should also result in reduced number density as particles get oxidized
-						! Original Formulation does not account for that, so using this to account for it
-						! W0 = W_OXIDATION/Cmin
-						! Alternatively maybe set M0 = M1/Cmin?
-						
-						W(0) = (W_O2(1)+W_OH(1))/10D0
-						
-						
-						!WRITE(*,*) '*****New W********'
-						!WRITE(*,*) W
-						!STOP
-					
-					END IF 							
-                                        
-                ELSE
-                    WRITE(*,*) 'Average Soot D < d*'
-					WRITE(*,*) 'THIS CONDITION SHOULD NOT BE POSSIBLE!, CHECK CALCULATE_SOURCE_AGG'
-					STOP
-                    CALL CALCULATE_SOURCE_NO_AGG()
-                END IF
-        
-				RETURN
-            END SUBROUTINE CALCULATE_SOURCE_AGG
-                        
-	END SUBROUTINE CALCULATE_SOURCE_SWITCHER
 	
 	
 	

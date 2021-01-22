@@ -1688,7 +1688,6 @@ class WSR():
 			while solver.t<t0+dt:
 				solver.integrate(solver.t+dt)
 				solver_iter+= 1
-				keyboard()
 				if solver_iter == 100:
 					keyboard()
 			
@@ -1757,7 +1756,7 @@ class WSR():
 			if self.solve_soot:
 				if all(np.abs(self.soot_rates()[0])<convergence_criteria):
 					print('Convergence Probably Met?')
-				
+					keyboard()
 					# Return nonzero Solution Array
 					self.Sol = self.Sol[~(self.Sol==0).all(axis=1)]
 					return
