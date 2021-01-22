@@ -1756,7 +1756,6 @@ class WSR():
 			if self.solve_soot:
 				if all(np.abs(self.soot_rates()[0])<convergence_criteria):
 					print('Convergence Probably Met?')
-					keyboard()
 					# Return nonzero Solution Array
 					self.Sol = self.Sol[~(self.Sol==0).all(axis=1)]
 					return
