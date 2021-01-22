@@ -22,12 +22,6 @@ Written during my PhD to predict soot formation in a fuel rich kerosene rocket c
  
  
  # Please Cite:
- @dissertation{Kulakhmetov2020,
-author = "Rufat Kulakhmetov",
-title = "{MEASUREMENT AND MODELING OF SOOT FORMATION AND DEPOSITION IN FUEL RICH HIGH PRESSURE KEROSENE COMBUSTION}",
-year = "2020",
-month = "12",
-url = "https://hammer.figshare.com/articles/thesis/MEASUREMENT_AND_MODELING_OF_SOOT_FORMATION_AND_DEPOSITION_IN_FUEL_RICH_HIGH_PRESSURE_KEROSENE_COMBUSTION/13366178",
-doi = "10.25394/PGS.13366178.v1"
-}
+Kulakhmetov, R. “MEASUREMENT AND MODELING OF SOOT FORMATION AND DEPOSITION IN FUEL RICH HIGH PRESSURE KEROSENE COMBUSTION.” 2020. https://doi.org/10.25394/PGS.13366178.v1.
+
  
